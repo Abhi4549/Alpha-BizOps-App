@@ -4,6 +4,8 @@ import time
 import re
 import pdfplumber
 from supabase import create_client
+import warnings
+warnings.filterwarnings('ignore')
 
 # ==========================================
 # ⚙️ 1. SECURE CLOUD DATABASE (SUPABASE)
@@ -34,11 +36,11 @@ st.markdown("""
     .terminal-font { font-family: 'Courier New', Courier, monospace; color: #00FF41; }
     div[data-testid="stMetricValue"] { color: #00FF41 !important; font-family: 'Courier New', Courier, monospace; font-size: 24px; font-weight: bold;}
     div[data-testid="stMetricLabel"] { color: #AAAAAA !important; font-size: 14px; font-weight: bold;}
-    .summary-box { border: 2px solid #00FF41; border-radius: 8px; padding: 15px; background-color: #111111; margin-bottom: 20px;}
+    .summary-box { border: 2px solid #00FF41; border-radius: 8px; padding: 15px; background-color: #111111; margin-top: 20px;}
     </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<h1>🥷 ALPHA BIZOPS [STRICT CA ENGINE]</h1>", unsafe_allow_html=True)
+st.markdown("<h1>🥷 ALPHA BIZOPS [PRO CA ENGINE]</h1>", unsafe_allow_html=True)
 st.markdown(f"<p class='terminal-font'>SYSTEM PROTOCOL: SECURE | DB: {db_status}</p>", unsafe_allow_html=True)
 st.markdown("---")
 
@@ -48,11 +50,12 @@ host_gstin = st.sidebar.text_input("Host GSTIN", value="07ALPHAXX1Z")
 stealth_mode = st.sidebar.toggle("🛡️ STEALTH PROTOCOL", value=True)
 
 # ==========================================
-# 🛠️ 3. STRICT DATA CLEANING ENGINE
+# 🛠️ 3. STRICT PRO CA CLEANING ENGINE
 # ==========================================
 def extract_pure_number(val):
     if pd.isna(val) or str(val).strip() == "": return 0.0
-    val_str = str(val).upper().replace(',', '')
+    # Clean commas and any currency symbols
+    val_str = str(val).replace(',', '').replace('₹', '').replace('Cr', '').replace('Dr', '').strip()
     match = re.search(r'[-+]?\d*\.?\d+', val_str)
     if match:
         try: return float(match.group())
@@ -61,11 +64,12 @@ def extract_pure_number(val):
 
 def process_bank_excel(file):
     try:
+        # Load raw without header to find where actual data starts
         df_raw = pd.read_excel(file, header=None) if file.name.endswith('.xlsx') else pd.read_csv(file, header=None)
     except Exception as e:
         return None, f"System Error: Could not read file. {e}"
     
-    # Target exact header row
+    # 1. Hunt for the Header Row (Date & Narration must be there)
     header_idx = -1
     for idx, row in df_raw.iterrows():
         row_str = " ".join(str(x).lower() for x in row.values if pd.notna(x))
@@ -74,16 +78,17 @@ def process_bank_excel(file):
             break
             
     if header_idx == -1:
-        return None, "Error: Could not find Bank Header row (Date, Debit, Credit)."
+        return None, "Error: Could not find Bank Header row. Ensure it's a valid Bank Statement."
 
+    # 2. Reload with correct header
     df = pd.read_excel(file, skiprows=header_idx) if file.name.endswith('.xlsx') else pd.read_csv(file, skiprows=header_idx)
     
-    # Identify exact columns
+    # 3. Identify exact columns intelligently
     date_c, desc_c, debit_c, credit_c, bal_c = None, None, None, None, None
     for col in df.columns:
         c = str(col).lower().replace('\n', ' ').replace('.', '').strip()
-        if not date_c and any(w in c for w in ['date', 'value dt', 'txn dt']): date_c = col
-        elif not desc_c and any(w in c for w in ['narration', 'particular', 'description', 'remark']): desc_c = col
+        if not date_c and any(w in c for w in ['date', 'value dt', 'txn dt', 'transaction']): date_c = col
+        elif not desc_c and any(w in c for w in ['narration', 'particular', 'description', 'remark', 'details']): desc_c = col
         elif not debit_c and any(w in c for w in ['debit', 'withdrawal', 'dr', 'paid out']): debit_c = col
         elif not credit_c and any(w in c for w in ['credit', 'deposit', 'cr', 'paid in']): credit_c = col
         elif not bal_c and any(w in c for w in ['balance', 'bal', 'closing']): bal_c = col
@@ -91,37 +96,39 @@ def process_bank_excel(file):
     if not (debit_c and credit_c and bal_c and date_c and desc_c):
         return None, f"Error: Failed to map exact columns. Found: {list(df.columns)}"
 
-    # =====================================
-    # 🗃️ BRUTAL TABLE FORMATTER (5 STRICT COLS)
-    # =====================================
-    df_clean = pd.DataFrame()
-    
-    # 1. Date
-    df_clean["Date"] = df[date_c].astype(str).str.replace('00:00:00', '').str.strip()
-    
-    # 2. Narration
-    df_clean["Narration"] = df[desc_c].astype(str).str.replace('\n', ' ').str.strip()
-    
-    # 3 & 4. Debit and Credit (Clean numbers only)
-    df_clean["Debit"] = df[debit_c].apply(extract_pure_number)
-    df_clean["Credit"] = df[credit_c].apply(extract_pure_number)
-    
-    # Remove junk rows (where both debit and credit are 0)
-    df_clean = df_clean[(df_clean["Debit"] > 0) | (df_clean["Credit"] > 0)]
-    
-    # 5. Tally Ledger - EVERYTHING GOES TO SUSPENSE INITIALLY
-    df_clean["Tally Ledger"] = "🟡 Suspense A/c"
-
-    # Exact Audit Metrics from original balance column
-    df_temp_bal = df[bal_c].apply(extract_pure_number)
-    df_temp_bal = df_temp_bal[df_temp_bal != 0.0]
+    # 4. Extract Opening & Closing Balance BEFORE filtering out junk rows
+    df[bal_c] = df[bal_c].apply(extract_pure_number)
+    valid_balances = df[df[bal_c] != 0.0][bal_c]
     
     metrics = {
-        "op_bal": df_temp_bal.iloc[0] if not df_temp_bal.empty else 0.0,
-        "cl_bal": df_temp_bal.iloc[-1] if not df_temp_bal.empty else 0.0,
-        "dr_count": int((df_clean["Debit"] > 0).sum()),
-        "cr_count": int((df_clean["Credit"] > 0).sum())
+        "op_bal": valid_balances.iloc[0] if not valid_balances.empty else 0.0,
+        "cl_bal": valid_balances.iloc[-1] if not valid_balances.empty else 0.0,
     }
+
+    # 5. Extract strict numbers for Debit and Credit
+    df[debit_c] = df[debit_c].apply(extract_pure_number)
+    df[credit_c] = df[credit_c].apply(extract_pure_number)
+
+    # 6. CA LOGIC: Filter out ANY row that doesn't have a transaction (Drop text lines, opening balance lines)
+    # Only keep rows where Debit > 0 OR Credit > 0
+    df = df[(df[debit_c] > 0) | (df[credit_c] > 0)]
+    
+    # Drop rows without a Date
+    df.dropna(subset=[date_c], inplace=True)
+
+    # 7. Formulate EXACT 5-Column Alpha Output
+    df_clean = pd.DataFrame()
+    df_clean["Date"] = df[date_c].astype(str).str.replace('00:00:00', '').str.strip()
+    df_clean["Narration"] = df[desc_c].astype(str).str.replace('\n', ' ').str.replace('  ', ' ').str.strip()
+    df_clean["Debit"] = df[debit_c]
+    df_clean["Credit"] = df[credit_c]
+    df_clean["Tally Ledger"] = "🟡 Suspense A/c" # Auto routed to Suspense for DB Mapping
+
+    # Finalize Metrics
+    metrics["dr_count"] = int((df_clean["Debit"] > 0).sum())
+    metrics["cr_count"] = int((df_clean["Credit"] > 0).sum())
+    metrics["total_dr_amt"] = float(df_clean["Debit"].sum())
+    metrics["total_cr_amt"] = float(df_clean["Credit"].sum())
         
     return df_clean, metrics
 
@@ -137,7 +144,7 @@ with tab1:
     uploaded_file = st.file_uploader("Upload Secured File", type=["pdf", "xlsx", "csv"])
 
     if uploaded_file and st.button("EXECUTE PRO SCAN"):
-        with st.spinner("Executing Strict Table Formatting & Suspense Routing..."):
+        with st.spinner("Isolating Debits/Credits & Routing to Suspense..."):
             try:
                 # ---------------- BANK STATEMENT LOGIC ----------------
                 if scan_mode == "🏦 Bank Statement (Excel/CSV/PDF)":
@@ -145,16 +152,21 @@ with tab1:
                         df_final, result = process_bank_excel(uploaded_file)
                         
                         if df_final is not None:
+                            # 1. DISPLAY THE CLEAN TABLE FIRST
                             st.session_state.master_data = df_final
+                            st.markdown("### 🗃️ ISOLATED TALLY DATA (STRICT 5 COLUMNS)")
+                            st.dataframe(st.session_state.master_data, use_container_width=True)
                             
-                            # Exact Audit Summary Box
-                            st.markdown("<div class='summary-box'><h3 style='text-align:center; color:#00FF41; margin-top:0;'>📊 STRICT CA AUDIT SUMMARY</h3>", unsafe_allow_html=True)
+                            # 2. DISPLAY THE AUDIT SUMMARY AT THE BOTTOM
+                            st.markdown("<div class='summary-box'><h3 style='text-align:center; color:#00FF41; margin-top:0;'>📊 PRO CA AUDIT SUMMARY</h3>", unsafe_allow_html=True)
                             c1, c2, c3, c4 = st.columns(4)
                             c1.metric("📌 OPENING BALANCE", f"₹ {result['op_bal']:,.2f}")
-                            c2.metric(f"🔴 NO. OF DEBITS", f"{result['dr_count']} Entries")
-                            c3.metric(f"🟢 NO. OF CREDITS", f"{result['cr_count']} Entries")
+                            c2.metric(f"🔴 DEBIT ({result['dr_count']} Entries)", f"₹ {result['total_dr_amt']:,.2f}")
+                            c3.metric(f"🟢 CREDIT ({result['cr_count']} Entries)", f"₹ {result['total_cr_amt']:,.2f}")
                             c4.metric("🏁 CLOSING BALANCE", f"₹ {result['cl_bal']:,.2f}")
                             st.markdown("</div>", unsafe_allow_html=True)
+                            
+                            st.success("✅ SYSTEM AUDIT PASSED: Data cleaned. All ledgers routed to Suspense.")
                             
                         else:
                             st.error(result)
@@ -174,7 +186,9 @@ with tab1:
                         
                         if parsed:
                             st.session_state.master_data = pd.DataFrame(parsed)
-                            st.success(f"🔓 PDF Decrypted. Extracted {len(parsed)} valid entries. ALL ROUTED TO SUSPENSE INITIALLY.")
+                            st.markdown("### 🗃️ ISOLATED TALLY DATA")
+                            st.dataframe(st.session_state.master_data, use_container_width=True)
+                            st.success(f"🔓 PDF Decrypted. All entries routed to Suspense.")
                         else:
                             st.warning("No tabular dates found in PDF. Ensure it's a standard bank format.")
 
@@ -193,6 +207,7 @@ with tab1:
                             "Target File": [uploaded_file.name],
                             "GSTINs Decoded": [", ".join(found) if found else "NO GSTIN FOUND"]
                         })
+                        st.dataframe(st.session_state.master_data, use_container_width=True)
                         st.success("PDF Invoice Deep Scan Complete.")
                         
                     elif uploaded_file.name.endswith(('.xlsx', '.csv')):
@@ -204,15 +219,11 @@ with tab1:
                         found = list(set(re.findall(gstin_pattern, full_text)))
                         
                         st.session_state.master_data = df_bill
+                        st.dataframe(st.session_state.master_data, use_container_width=True)
                         st.success(f"✅ EXCEL INVOICE LOADED. GSTINs Detected: {', '.join(found) if found else 'NONE'}")
 
             except Exception as e:
                 st.error(f"SYSTEM HALT: Critical Error Encountered -> {str(e)}")
-
-    # DISPLAY STRICT TABLE
-    if 'master_data' in st.session_state:
-        st.markdown("### 🗃️ ISOLATED DATA (100% ROUTED TO SUSPENSE)")
-        st.dataframe(st.session_state.master_data, use_container_width=True)
 
 with tab2:
     st.subheader("COGNITIVE AI MAPPER (DB MEMORY)")
