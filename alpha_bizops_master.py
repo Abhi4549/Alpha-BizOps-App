@@ -25,7 +25,7 @@ supabase_db, db_status = init_db()
 # ==========================================
 # 🥷 2. UI & ALPHA INVADER THEME
 # ==========================================
-st.set_page_config(page_title="Alpha BizOps | Tally Automator", layout="wide", page_icon="🥷")
+st.set_page_config(page_title="Alpha BizOps | Vyapar Engine", layout="wide", page_icon="🥷")
 
 st.markdown("""
     <style>
@@ -37,24 +37,19 @@ st.markdown("""
     div[data-testid="stMetricValue"] { color: #00FF41 !important; font-family: 'Courier New', Courier, monospace; font-size: 24px; font-weight: bold;}
     div[data-testid="stMetricLabel"] { color: #AAAAAA !important; font-size: 14px; font-weight: bold;}
     .summary-box { border: 2px solid #00FF41; border-radius: 8px; padding: 15px; background-color: #111111; margin-top: 20px;}
+    .bulk-box { border: 1px solid #00FF41; border-radius: 5px; padding: 15px; background-color: #0a0a0a; margin-bottom: 20px;}
     </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<h1>🥷 ALPHA BIZOPS [PRO CA ENGINE]</h1>", unsafe_allow_html=True)
+st.markdown("<h1>🥷 ALPHA BIZOPS [VYAPAR-STYLE CA ENGINE]</h1>", unsafe_allow_html=True)
 st.markdown(f"<p class='terminal-font'>SYSTEM PROTOCOL: SECURE | DB: {db_status}</p>", unsafe_allow_html=True)
 st.markdown("---")
-
-st.sidebar.markdown("### ⚙️ SYSTEM CONFIG")
-tally_port = st.sidebar.text_input("Tally Port", value="9000")
-host_gstin = st.sidebar.text_input("Host GSTIN", value="07ALPHAXX1Z")
-stealth_mode = st.sidebar.toggle("🛡️ STEALTH PROTOCOL", value=True)
 
 # ==========================================
 # 🛠️ 3. STRICT PRO CA CLEANING ENGINE
 # ==========================================
 def extract_pure_number(val):
     if pd.isna(val) or str(val).strip() == "": return 0.0
-    # Clean commas and any currency symbols
     val_str = str(val).replace(',', '').replace('₹', '').replace('Cr', '').replace('Dr', '').strip()
     match = re.search(r'[-+]?\d*\.?\d+', val_str)
     if match:
@@ -62,14 +57,26 @@ def extract_pure_number(val):
         except: return 0.0
     return 0.0
 
+def pre_map_ledger(narration):
+    """Initial Auto-Mapping based on basic rules"""
+    nl = str(narration).lower()
+    auto_rules = {
+        "zomato": "Office Welfare", "swiggy": "Office Welfare",
+        "amazon": "Office Expenses", "aws": "Software Subscriptions",
+        "hdfc": "Bank Charges", "sbi": "Bank Charges", "icici": "Bank Charges",
+        "salary": "Staff Salary A/c", "gst": "GST Payable",
+    }
+    for key, ledger in auto_rules.items():
+        if key in nl:
+            return ledger
+    return "🟡 Suspense A/c"
+
 def process_bank_excel(file):
     try:
-        # Load raw without header to find where actual data starts
         df_raw = pd.read_excel(file, header=None) if file.name.endswith('.xlsx') else pd.read_csv(file, header=None)
     except Exception as e:
         return None, f"System Error: Could not read file. {e}"
     
-    # 1. Hunt for the Header Row (Date & Narration must be there)
     header_idx = -1
     for idx, row in df_raw.iterrows():
         row_str = " ".join(str(x).lower() for x in row.values if pd.notna(x))
@@ -80,15 +87,13 @@ def process_bank_excel(file):
     if header_idx == -1:
         return None, "Error: Could not find Bank Header row. Ensure it's a valid Bank Statement."
 
-    # 2. Reload with correct header
     df = pd.read_excel(file, skiprows=header_idx) if file.name.endswith('.xlsx') else pd.read_csv(file, skiprows=header_idx)
     
-    # 3. Identify exact columns intelligently
     date_c, desc_c, debit_c, credit_c, bal_c = None, None, None, None, None
     for col in df.columns:
         c = str(col).lower().replace('\n', ' ').replace('.', '').strip()
-        if not date_c and any(w in c for w in ['date', 'value dt', 'txn dt', 'transaction']): date_c = col
-        elif not desc_c and any(w in c for w in ['narration', 'particular', 'description', 'remark', 'details']): desc_c = col
+        if not date_c and any(w in c for w in ['date', 'value dt', 'txn dt']): date_c = col
+        elif not desc_c and any(w in c for w in ['narration', 'particular', 'description', 'remark']): desc_c = col
         elif not debit_c and any(w in c for w in ['debit', 'withdrawal', 'dr', 'paid out']): debit_c = col
         elif not credit_c and any(w in c for w in ['credit', 'deposit', 'cr', 'paid in']): credit_c = col
         elif not bal_c and any(w in c for w in ['balance', 'bal', 'closing']): bal_c = col
@@ -96,7 +101,6 @@ def process_bank_excel(file):
     if not (debit_c and credit_c and bal_c and date_c and desc_c):
         return None, f"Error: Failed to map exact columns. Found: {list(df.columns)}"
 
-    # 4. Extract Opening & Closing Balance BEFORE filtering out junk rows
     df[bal_c] = df[bal_c].apply(extract_pure_number)
     valid_balances = df[df[bal_c] != 0.0][bal_c]
     
@@ -105,26 +109,21 @@ def process_bank_excel(file):
         "cl_bal": valid_balances.iloc[-1] if not valid_balances.empty else 0.0,
     }
 
-    # 5. Extract strict numbers for Debit and Credit
     df[debit_c] = df[debit_c].apply(extract_pure_number)
     df[credit_c] = df[credit_c].apply(extract_pure_number)
 
-    # 6. CA LOGIC: Filter out ANY row that doesn't have a transaction (Drop text lines, opening balance lines)
-    # Only keep rows where Debit > 0 OR Credit > 0
     df = df[(df[debit_c] > 0) | (df[credit_c] > 0)]
-    
-    # Drop rows without a Date
     df.dropna(subset=[date_c], inplace=True)
 
-    # 7. Formulate EXACT 5-Column Alpha Output
     df_clean = pd.DataFrame()
     df_clean["Date"] = df[date_c].astype(str).str.replace('00:00:00', '').str.strip()
     df_clean["Narration"] = df[desc_c].astype(str).str.replace('\n', ' ').str.replace('  ', ' ').str.strip()
     df_clean["Debit"] = df[debit_c]
     df_clean["Credit"] = df[credit_c]
-    df_clean["Tally Ledger"] = "🟡 Suspense A/c" # Auto routed to Suspense for DB Mapping
+    
+    # Apply Initial Auto-Mapping
+    df_clean["Tally Ledger"] = df_clean["Narration"].apply(pre_map_ledger)
 
-    # Finalize Metrics
     metrics["dr_count"] = int((df_clean["Debit"] > 0).sum())
     metrics["cr_count"] = int((df_clean["Credit"] > 0).sum())
     metrics["total_dr_amt"] = float(df_clean["Debit"].sum())
@@ -135,99 +134,84 @@ def process_bank_excel(file):
 # ==========================================
 # 🚀 4. DASHBOARD TABS
 # ==========================================
-tab1, tab2, tab3, tab4 = st.tabs(["[ 1 ] DEEP SCAN", "[ 2 ] AI LEDGER", "[ 3 ] GSTR BOT", "[ 4 ] TALLY PUSH"])
+tab1, tab2, tab3, tab4 = st.tabs(["[ 1 ] RAW SCAN", "[ 2 ] VYAPAR BULK MAPPER", "[ 3 ] GSTR BOT", "[ 4 ] TALLY PUSH"])
 
 with tab1:
-    st.subheader("OMNI-SCANNER: ENTERPRISE EDITION")
-    scan_mode = st.radio("TARGET PROTOCOL:", ["🏦 Bank Statement (Excel/CSV/PDF)", "🧾 GST Invoice (PDF/Excel/CSV)"], horizontal=True)
-    pdf_pw = st.text_input("PDF Encryption Key (Leave blank if none) 🔐", type="password")
-    uploaded_file = st.file_uploader("Upload Secured File", type=["pdf", "xlsx", "csv"])
+    st.subheader("1. UPLOAD & EXTRACT DATA")
+    scan_mode = st.radio("TARGET PROTOCOL:", ["🏦 Bank Statement (Excel/CSV)"], horizontal=True)
+    uploaded_file = st.file_uploader("Upload Bank Statement", type=["xlsx", "csv"])
 
-    if uploaded_file and st.button("EXECUTE PRO SCAN"):
-        with st.spinner("Isolating Debits/Credits & Routing to Suspense..."):
+    if uploaded_file and st.button("RUN EXTRACTION"):
+        with st.spinner("Extracting standard columns..."):
             try:
-                # ---------------- BANK STATEMENT LOGIC ----------------
-                if scan_mode == "🏦 Bank Statement (Excel/CSV/PDF)":
-                    if uploaded_file.name.endswith(('.xlsx', '.csv')):
-                        df_final, result = process_bank_excel(uploaded_file)
-                        
-                        if df_final is not None:
-                            # 1. DISPLAY THE CLEAN TABLE FIRST
-                            st.session_state.master_data = df_final
-                            st.markdown("### 🗃️ ISOLATED TALLY DATA (STRICT 5 COLUMNS)")
-                            st.dataframe(st.session_state.master_data, use_container_width=True)
-                            
-                            # 2. DISPLAY THE AUDIT SUMMARY AT THE BOTTOM
-                            st.markdown("<div class='summary-box'><h3 style='text-align:center; color:#00FF41; margin-top:0;'>📊 PRO CA AUDIT SUMMARY</h3>", unsafe_allow_html=True)
-                            c1, c2, c3, c4 = st.columns(4)
-                            c1.metric("📌 OPENING BALANCE", f"₹ {result['op_bal']:,.2f}")
-                            c2.metric(f"🔴 DEBIT ({result['dr_count']} Entries)", f"₹ {result['total_dr_amt']:,.2f}")
-                            c3.metric(f"🟢 CREDIT ({result['cr_count']} Entries)", f"₹ {result['total_cr_amt']:,.2f}")
-                            c4.metric("🏁 CLOSING BALANCE", f"₹ {result['cl_bal']:,.2f}")
-                            st.markdown("</div>", unsafe_allow_html=True)
-                            
-                            st.success("✅ SYSTEM AUDIT PASSED: Data cleaned. All ledgers routed to Suspense.")
-                            
-                        else:
-                            st.error(result)
-                            
-                    elif uploaded_file.name.endswith('.pdf'):
-                        pw = pdf_pw if pdf_pw else ''
-                        extracted_text = ""
-                        with pdfplumber.open(uploaded_file, password=pw) as pdf:
-                            for page in pdf.pages: extracted_text += page.extract_text() + "\n"
-                            
-                        date_rx = re.compile(r'^(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{1,2}-[A-Za-z]{3}-\d{2,4})')
-                        parsed = []
-                        for line in extracted_text.split('\n'):
-                            if date_rx.match(line.strip()):
-                                clean = re.sub(r'\s+', ' ', line.strip())
-                                parsed.append({"Date": clean.split()[0], "Narration": clean[:90] + "...", "Debit": 0.0, "Credit": 0.0, "Tally Ledger": "🟡 Suspense A/c"})
-                        
-                        if parsed:
-                            st.session_state.master_data = pd.DataFrame(parsed)
-                            st.markdown("### 🗃️ ISOLATED TALLY DATA")
-                            st.dataframe(st.session_state.master_data, use_container_width=True)
-                            st.success(f"🔓 PDF Decrypted. All entries routed to Suspense.")
-                        else:
-                            st.warning("No tabular dates found in PDF. Ensure it's a standard bank format.")
-
-                # ---------------- GST INVOICE LOGIC ----------------
-                elif scan_mode == "🧾 GST Invoice (PDF/Excel/CSV)":
-                    gstin_pattern = r'\b[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}\b'
+                df_final, result = process_bank_excel(uploaded_file)
+                if df_final is not None:
+                    # Save to session state for Bulk Mapping
+                    st.session_state.master_data = df_final
+                    st.session_state.metrics = result
                     
-                    if uploaded_file.name.endswith('.pdf'):
-                        pw = pdf_pw if pdf_pw else ''
-                        extracted_text = ""
-                        with pdfplumber.open(uploaded_file, password=pw) as pdf:
-                            for page in pdf.pages: extracted_text += page.extract_text() + "\n"
-                        
-                        found = list(set(re.findall(gstin_pattern, extracted_text)))
-                        st.session_state.master_data = pd.DataFrame({
-                            "Target File": [uploaded_file.name],
-                            "GSTINs Decoded": [", ".join(found) if found else "NO GSTIN FOUND"]
-                        })
-                        st.dataframe(st.session_state.master_data, use_container_width=True)
-                        st.success("PDF Invoice Deep Scan Complete.")
-                        
-                    elif uploaded_file.name.endswith(('.xlsx', '.csv')):
-                        df_bill = pd.read_excel(uploaded_file) if uploaded_file.name.endswith('.xlsx') else pd.read_csv(uploaded_file)
-                        df_bill.dropna(how='all', inplace=True)
-                        df_bill.dropna(axis=1, how='all', inplace=True)
-                        
-                        full_text = df_bill.to_string()
-                        found = list(set(re.findall(gstin_pattern, full_text)))
-                        
-                        st.session_state.master_data = df_bill
-                        st.dataframe(st.session_state.master_data, use_container_width=True)
-                        st.success(f"✅ EXCEL INVOICE LOADED. GSTINs Detected: {', '.join(found) if found else 'NONE'}")
-
+                    st.success("✅ EXTRACTED SUCCESSFULLY. GO TO '[ 2 ] VYAPAR BULK MAPPER' TO MAP LEDGERS.")
+                    
+                    st.markdown("<div class='summary-box'><h3 style='text-align:center; color:#00FF41; margin-top:0;'>📊 DATA SUMMARY</h3>", unsafe_allow_html=True)
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("📌 OPENING BALANCE", f"₹ {result['op_bal']:,.2f}")
+                    c2.metric(f"🔴 DEBIT ({result['dr_count']} Entries)", f"₹ {result['total_dr_amt']:,.2f}")
+                    c3.metric(f"🟢 CREDIT ({result['cr_count']} Entries)", f"₹ {result['total_cr_amt']:,.2f}")
+                    c4.metric("🏁 CLOSING BALANCE", f"₹ {result['cl_bal']:,.2f}")
+                    st.markdown("</div>", unsafe_allow_html=True)
+                else:
+                    st.error(result)
             except Exception as e:
-                st.error(f"SYSTEM HALT: Critical Error Encountered -> {str(e)}")
+                st.error(f"SYSTEM ERROR -> {str(e)}")
 
 with tab2:
-    st.subheader("COGNITIVE AI MAPPER (DB MEMORY)")
-    st.info("Mapping engine will pull from Supabase DB memory here to resolve Suspense A/c before Tally execution.")
+    st.subheader("2. AUTO & BULK LEDGER MAPPING")
+    
+    if 'master_data' in st.session_state:
+        # 1. BULK MAPPER TOOL (Vyapar Style)
+        st.markdown("<div class='bulk-box'>", unsafe_allow_html=True)
+        st.markdown("#### ⚡ QUICK BULK MAPPER")
+        colA, colB, colC = st.columns([2, 2, 1])
+        with colA:
+            search_kw = st.text_input("🔍 Search keyword in Narration (e.g., UPI, Rahul, Cash)")
+        with colB:
+            assign_ledger = st.text_input("✍️ Assign Tally Ledger (e.g., Traveling Exp)")
+        with colC:
+            st.write("")
+            st.write("")
+            if st.button("UPDATE ALL"):
+                if search_kw and assign_ledger:
+                    mask = st.session_state.master_data['Narration'].str.contains(search_kw, case=False, na=False)
+                    updated_count = mask.sum()
+                    st.session_state.master_data.loc[mask, 'Tally Ledger'] = assign_ledger
+                    st.success(f"✅ {updated_count} Entries successfully mapped to '{assign_ledger}'")
+                else:
+                    st.warning("Please enter both Keyword and Ledger name.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # 2. EDITABLE GRID (Like Vyapar/Excel)
+        st.markdown("#### 📝 LIVE DATA EDITOR (Click any cell to edit manually)")
+        st.info("💡 You can manually fix any single Ledger directly in the table below.")
+        
+        # st.data_editor creates a real Excel-like editable grid in Streamlit!
+        st.session_state.master_data = st.data_editor(
+            st.session_state.master_data, 
+            use_container_width=True,
+            num_rows="dynamic",
+            column_config={
+                "Tally Ledger": st.column_config.TextColumn(
+                    "Tally Ledger",
+                    help="Map this to a Tally ledger name",
+                    required=True,
+                )
+            }
+        )
+        
+        if st.button("💾 SAVE MASTER DATA TO MEMORY"):
+            st.success("✅ Mapped data locked and ready for Tally XML Push!")
+            
+    else:
+        st.warning("No data found. Please upload a Bank Statement in Tab 1 first.")
 
 with tab3:
     st.subheader("GSTR INVISIBLE BOT")
@@ -235,4 +219,4 @@ with tab3:
 
 with tab4:
     st.subheader("TALLY INJECTION PROTOCOL")
-    st.warning("XML Push paused. Awaiting DB Memory Ledger mapping.")
+    st.warning("XML Push paused. Waiting for data to be finalized in Tab 2.")
