@@ -3,6 +3,7 @@ import pandas as pd
 import time
 import re
 import pdfplumber
+import numpy as np
 from supabase import create_client, Client
 
 # ==========================================
@@ -30,6 +31,8 @@ st.markdown("""
     .stButton>button { background-color: #00FF41; color: #000000; border-radius: 2px; font-weight: bold; border: 1px solid #00FF41;}
     .stButton>button:hover { background-color: #000000; color: #00FF41; box-shadow: 0 0 10px #00FF41; }
     .terminal-font { font-family: 'Courier New', Courier, monospace; color: #00FF41; }
+    div[data-testid="stMetricValue"] { color: #00FF41 !important; font-family: 'Courier New', Courier, monospace; }
+    div[data-testid="stMetricLabel"] { color: #AAAAAA !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -42,148 +45,63 @@ tally_port = st.sidebar.text_input("Tally Port", value="9000")
 host_gstin = st.sidebar.text_input("Host GSTIN", value="07ALPHAXX1Z")
 stealth_mode = st.sidebar.toggle("🛡️ STEALTH PROTOCOL", value=True)
 
+# Helper Function: Clean Numbers
+def clean_amount(val):
+    if pd.isna(val) or val == "" or val == "-": return 0.0
+    val_str = str(val).replace(',', '').replace('₹', '').replace(' ', '').strip()
+    try: return float(val_str)
+    except: return 0.0
+
 # ==========================================
 # 🚀 3. MAIN DASHBOARD & TABS
 # ==========================================
 tab1, tab2, tab3, tab4 = st.tabs(["[ 1 ] OCR SCAN", "[ 2 ] AI LEDGER", "[ 3 ] GSTR STEALTH BOT", "[ 4 ] TALLY PUSH"])
 
 with tab1:
-    st.subheader("INITIATE OMNI-SCANNER (SUPREME CA PROTOCOL)")
+    st.subheader("INITIATE OMNI-SCANNER (PRO RECONCILIATION)")
     
     scan_mode = st.radio("SELECT SCAN TARGET PROTOCOL:", ["🧾 GST Bill / Invoice", "🏦 Bank Statement"], horizontal=True)
-    pdf_password = st.text_input("Enter PDF Password (If Protected) 🔐", type="password")
+    pdf_password = st.text_input("Enter PDF Password (If Protected, else leave blank) 🔐", type="password")
     uploaded_file = st.file_uploader("Upload Target File (PDF, XLSX, CSV)", type=["pdf", "xlsx", "csv"])
     
-    if uploaded_file and st.button("RUN SUPREME CA SCAN"):
-        with st.spinner("Initiating 40-Year CA Cleaning Protocol..."):
+    if uploaded_file and st.button("RUN PRO CA SCAN"):
+        with st.spinner("Executing Extraction & Validation Protocol..."):
             try:
                 extracted_df = pd.DataFrame()
-                full_text = ""
-
+                
                 # ==========================================
-                # 🛠️ 1. EXCEL/CSV - ADVANCED CA CLEANING
+                # 🛠️ EXCEL/CSV PROCESSOR
                 # ==========================================
-                if uploaded_file.name.endswith(('.xlsx', '.csv')):
-                    # Pehle raw read karke kachra find karenge
+                if uploaded_file.name.endswith(('.xlsx', '.csv')) and scan_mode == "🏦 Bank Statement":
                     temp_df = pd.read_excel(uploaded_file) if uploaded_file.name.endswith('.xlsx') else pd.read_csv(uploaded_file)
                     
-                    # CA Logic: Find actual header row (containing 'Date' or 'Particulars')
                     header_row_index = 0
                     for i, row in temp_df.iterrows():
                         row_str = ' '.join(str(x).lower() for x in row.values)
-                        if 'date' in row_str and ('particular' in row_str or 'description' in row_str or 'narration' in row_str):
+                        if 'date' in row_str and ('particular' in row_str or 'narration' in row_str or 'description' in row_str):
                             header_row_index = i + 1
                             break
                     
-                    # Ab asli data read karenge kachra hatakar
                     if uploaded_file.name.endswith('.xlsx'):
-                        extracted_df = pd.read_excel(uploaded_file, skiprows=header_row_index)
+                        df_clean = pd.read_excel(uploaded_file, skiprows=header_row_index)
                     else:
-                        extracted_df = pd.read_csv(uploaded_file, skiprows=header_row_index)
-                        
-                    extracted_df.dropna(how='all', inplace=True)
+                        df_clean = pd.read_csv(uploaded_file, skiprows=header_row_index)
                     
-                    # CA Logic: Drop rows where Date column is empty (Removes footer junk)
-                    date_col = [col for col in extracted_df.columns if 'date' in col.lower()]
+                    df_clean.dropna(how='all', inplace=True)
+                    date_col = [col for col in df_clean.columns if 'date' in str(col).lower()]
                     if date_col:
-                        extracted_df.dropna(subset=[date_col[0]], inplace=True)
+                        df_clean.dropna(subset=[date_col[0]], inplace=True)
 
-                    extracted_df.fillna("-", inplace=True)
-                    st.success("EXCEL/CSV: Header Detected. Bank Junk Removed. Data Sanitized.")
-
-                # ==========================================
-                # 🛠️ 2. PDF - ADVANCED CA CLEANING
-                # ==========================================
-                elif uploaded_file.name.endswith('.pdf'):
-                    with pdfplumber.open(uploaded_file, password=pdf_password if pdf_password else None) as pdf:
-                        for page in pdf.pages:
-                            full_text += page.extract_text() + "\n"
-                    st.success("PDF DECRYPTED & TEXT EXTRACTED.")
-                
-                # ==========================================
-                # 🧾 LOGIC: GST BILL / INVOICE
-                # ==========================================
-                if scan_mode == "🧾 GST Bill / Invoice" and full_text:
-                    gstin_pattern = r'\b[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}\b'
-                    found_gstins = list(set(re.findall(gstin_pattern, full_text)))
+                    debit_c = next((c for c in df_clean.columns if any(w in str(c).lower() for w in ['debit', 'withdrawal', 'dr'])), None)
+                    credit_c = next((c for c in df_clean.columns if any(w in str(c).lower() for w in ['credit', 'deposit', 'cr'])), None)
+                    bal_c = next((c for c in df_clean.columns if 'balance' in str(c).lower()), None)
                     
-                    raw_data = {
-                        "File Name": [uploaded_file.name],
-                        "Detected GSTINs": [", ".join(found_gstins) if found_gstins else "GSTIN NOT DETECTED"],
-                        "Status": ["Cleaned & Ready"]
-                    }
-                    extracted_df = pd.DataFrame(raw_data)
-                
-                # ==========================================
-                # 🏦 LOGIC: BANK STATEMENT PDF (DATE-DRIVEN)
-                # ==========================================
-                elif scan_mode == "🏦 Bank Statement" and full_text:
-                    ai_memory = {"ZOMATO": "Staff Welfare", "AWS": "Cloud Hosting", "CASH": "Cash A/c", "RAHUL": "Rahul Enterprises"}
-                    lines = full_text.split('\n')
-                    parsed_entries = []
-                    
-                    # CA Logic: Match lines starting with standard Date formats
-                    # Like DD-MM-YYYY, DD/MM/YY, DD-Mon-YY
-                    date_regex = re.compile(r'^(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{1,2}-[A-Za-z]{3}-\d{2,4})')
-                    
-                    for line in lines:
-                        line = line.strip()
-                        # Agar line Date se shuru hoti hai, tabhi uthao (Ignore address/headers)
-                        if date_regex.match(line):
-                            clean_line = re.sub(r'\s+', ' ', line) # Remove extra spaces
-                            
-                            # Clean Narration: Remove bank codes
-                            narration_clean = clean_line.replace("NEFT/", "").replace("IMPS/", "").replace("UPI/", "")
-                            
-                            assigned_ledger = "🟡 Suspense A/c"
-                            for keyword, ledger in ai_memory.items():
-                                if keyword.lower() in narration_clean.lower():
-                                    assigned_ledger = f"🟢 {ledger}"
-                                    break
-                                    
-                            parsed_entries.append({
-                                "Sanitized Transaction": narration_clean[:70] + "...", 
-                                "AI Ledger Map": assigned_ledger
-                            })
-                            
-                    extracted_df = pd.DataFrame(parsed_entries)
-                    
-                    if extracted_df.empty:
-                        st.warning("⚠️ No valid transactions found. Make sure it's a standard Bank Statement PDF.")
-
-                # Final Display
-                if not extracted_df.empty:
-                    st.session_state.current_data = extracted_df
-                    st.session_state.scan_type = "BANK" if scan_mode == "🏦 Bank Statement" else "BILL"
-                    
-                with st.expander("VIEW RAW DATA vs CA CLEANED DATA (Alpha View)"):
-                    if full_text:
-                        st.text("RAW PDF EXTRACT (Full of Junk):")
-                        st.text(full_text[:1000] + "\n...[TRUNCATED]...")
+                    if debit_c and credit_c and bal_c:
+                        df_clean[debit_c] = df_clean[debit_c].apply(clean_amount)
+                        df_clean[credit_c] = df_clean[credit_c].apply(clean_amount)
+                        df_clean[bal_c] = df_clean[bal_c].apply(clean_amount)
                         
-            except Exception as e:
-                st.error(f"SYSTEM HALT: File format error. Error Details: {e}")
-            
-    if 'current_data' in st.session_state:
-        st.dataframe(st.session_state.current_data, use_container_width=True)
-
-with tab2:
-    st.subheader("COGNITIVE AI MAPPER")
-    if 'current_data' in st.session_state:
-        if st.session_state.scan_type == "BANK":
-            st.info("🏦 BANK MODE: Suspense A/c entries routed for review. 'Green' entries ready for Tally.")
-        else:
-            st.info("🧾 BILL MODE: Checking Masters for Auto-Creation...")
-    else:
-        st.warning("AWAITING TARGET DATA FROM SCANNER.")
-
-with tab3:
-    st.subheader("GSTR INVISIBLE BOT")
-    if 'current_data' in st.session_state:
-        st.info("Targets acquired. GSTR Bot awaits final GSTIN validation.")
-    else:
-        st.warning("Upload and Scan a document first.")
-
-with tab4:
-    st.subheader("TALLY INJECTION PROTOCOL")
-    st.warning("Awaiting final validation.")
+                        op_bal = df_clean[bal_c].iloc[0] if not df_clean.empty else 0.0
+                        cl_bal = df_clean[bal_c].iloc[-1] if not df_clean.empty else 0.0
+                        total_debits_amt = df_clean[debit_c].sum()
+                        total_credits_amt = df
