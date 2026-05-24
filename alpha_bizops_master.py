@@ -32,12 +32,13 @@ st.markdown("""
     .stButton>button { background-color: #00FF41; color: #000000; border-radius: 2px; font-weight: bold; border: 1px solid #00FF41;}
     .stButton>button:hover { background-color: #000000; color: #00FF41; box-shadow: 0 0 10px #00FF41; }
     .terminal-font { font-family: 'Courier New', Courier, monospace; color: #00FF41; }
-    div[data-testid="stMetricValue"] { color: #00FF41 !important; font-family: 'Courier New', Courier, monospace; font-size: 22px;}
-    div[data-testid="stMetricLabel"] { color: #AAAAAA !important; font-size: 13px;}
+    div[data-testid="stMetricValue"] { color: #00FF41 !important; font-family: 'Courier New', Courier, monospace; font-size: 24px; font-weight: bold;}
+    div[data-testid="stMetricLabel"] { color: #AAAAAA !important; font-size: 14px; font-weight: bold;}
+    .summary-box { border: 2px solid #00FF41; border-radius: 8px; padding: 15px; background-color: #111111; margin-bottom: 20px;}
     </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<h1>🥷 ALPHA BIZOPS [COGNITIVE CA ENGINE]</h1>", unsafe_allow_html=True)
+st.markdown("<h1>🥷 ALPHA BIZOPS [SUPREME CA ENGINE]</h1>", unsafe_allow_html=True)
 st.markdown(f"<p class='terminal-font'>SYSTEM PROTOCOL: SECURE | DB: {db_status}</p>", unsafe_allow_html=True)
 st.markdown("---")
 
@@ -50,7 +51,7 @@ stealth_mode = st.sidebar.toggle("🛡️ STEALTH PROTOCOL", value=True)
 # 🛠️ 3. SURGICAL DATA CLEANING & TALLY MAPPER
 # ==========================================
 def extract_pure_number(val):
-    if pd.isna(val): return 0.0
+    if pd.isna(val) or str(val).strip() == "": return 0.0
     val_str = str(val).upper().replace(',', '')
     match = re.search(r'[-+]?\d*\.?\d+', val_str)
     if match:
@@ -59,46 +60,40 @@ def extract_pure_number(val):
     return 0.0
 
 def map_tally_ledger(narration):
-    """Simulates checking Tally Masters for auto-mapping"""
     narration_lower = str(narration).lower()
-    
-    # 🧠 Alpha AI Memory (Simulated Tally Ledgers)
     tally_masters = {
-        "zomato": "Office Welfare",
-        "swiggy": "Office Welfare",
-        "amazon": "Computer Accessories",
-        "aws": "Software Subscriptions",
-        "airtel": "Telephone Expenses",
-        "jio": "Telephone Expenses",
-        "hdfc": "Bank Charges",
-        "icici": "Bank Charges",
-        "salary": "Staff Salary A/c",
-        "rent": "Office Rent A/c",
-        "gst": "GST Payable"
+        "zomato": "Office Welfare", "swiggy": "Office Welfare",
+        "amazon": "Computer Accessories", "aws": "Software Subscriptions",
+        "airtel": "Telephone Expenses", "jio": "Telephone Expenses",
+        "hdfc": "Bank Charges", "icici": "Bank Charges", "sbi": "Bank Charges",
+        "salary": "Staff Salary A/c", "rent": "Office Rent A/c", "gst": "GST Payable"
     }
-    
     for key, ledger in tally_masters.items():
         if key in narration_lower:
             return f"🟢 {ledger}"
-            
     return "🟡 Suspense A/c"
 
 def process_bank_excel(file):
+    # Read raw to find exact header row
     df_raw = pd.read_excel(file) if file.name.endswith('.xlsx') else pd.read_csv(file)
     
     header_idx = -1
     for idx, row in df_raw.iterrows():
         row_str = " ".join(str(x).lower() for x in row.values)
-        if ('date' in row_str or 'txn' in row_str) and ('narration' in row_str or 'particular' in row_str or 'description' in row_str or 'remarks' in row_str):
+        # Checking for date + narration/particulars
+        if ('date' in row_str or 'txn date' in row_str or 'value date' in row_str) and \
+           ('narration' in row_str or 'particular' in row_str or 'description' in row_str or 'remarks' in row_str):
             header_idx = idx
             break
             
     if header_idx == -1:
-        return None, "Error: Could not identify Bank headers (Date, Particulars). Please ensure it is a valid bank statement."
+        return None, "Error: Could not identify standard Bank headers (Date, Particulars/Narration). Ensure it's a valid statement."
 
+    # Load from the exact header row
     df = pd.read_excel(file, skiprows=header_idx + 1) if file.name.endswith('.xlsx') else pd.read_csv(file, skiprows=header_idx + 1)
     df.columns = [str(c).lower().replace('\n', ' ').strip() for c in df.columns]
     
+    # Isolate exact columns
     date_c, desc_c, debit_c, credit_c, bal_c = None, None, None, None, None
     for c in df.columns:
         if any(w in c for w in ['date', 'txn']) and not date_c: date_c = c
@@ -108,32 +103,31 @@ def process_bank_excel(file):
         elif any(w in c for w in ['balance', 'bal']) and not bal_c: bal_c = c
 
     if not (debit_c and credit_c and bal_c and date_c and desc_c):
-        return None, f"Error: Could not separate Date/Narration/Debit/Credit. Columns found: {list(df.columns)}"
+        return None, f"Error: Could not cleanly separate Date, Narration, Debit, and Credit. Found columns: {list(df.columns)}"
 
+    # Drop blank dates (removes bank junk at bottom)
     df.dropna(subset=[date_c], inplace=True)
     
+    # Surgical number cleanup
     df[debit_c] = df[debit_c].apply(extract_pure_number)
     df[credit_c] = df[credit_c].apply(extract_pure_number)
     df[bal_c] = df[bal_c].apply(extract_pure_number)
 
+    # Calculate Audit Metrics
     valid_bals = df[df[bal_c] != 0.0][bal_c]
     metrics = {
         "op_bal": valid_bals.iloc[0] if not valid_bals.empty else 0.0,
         "cl_bal": valid_bals.iloc[-1] if not valid_bals.empty else 0.0,
-        "total_dr": df[debit_c].sum(),
-        "total_cr": df[credit_c].sum(),
-        "dr_count": (df[debit_c] > 0).sum(),
-        "cr_count": (df[credit_c] > 0).sum()
+        "dr_count": int((df[debit_c] > 0).sum()),
+        "cr_count": int((df[credit_c] > 0).sum())
     }
 
-    # Creating the EXACT Tally Ready DataFrame
+    # CREATE THE STRICT 5-COLUMN TABLE
     df_clean = pd.DataFrame()
     df_clean["Date"] = df[date_c]
     df_clean["Narration"] = df[desc_c].astype(str).str.replace('\n', ' ').str.strip()
     df_clean["Debit"] = df[debit_c]
     df_clean["Credit"] = df[credit_c]
-    
-    # 🧠 Alpha Logic: Auto Map vs Suspense
     df_clean["Tally Ledger"] = df_clean["Narration"].apply(map_tally_ledger)
         
     return df_clean, metrics
@@ -159,13 +153,16 @@ with tab1:
                         
                         if df is not None:
                             st.session_state.master_data = df
-                            st.markdown("### 📊 CA AUDIT RECONCILIATION")
+                            
+                            # THE HIGHLIGHTED SUMMARY BOX
+                            st.markdown("<div class='summary-box'><h3 style='text-align:center; color:#00FF41; margin-top:0;'>📊 SUPREME CA AUDIT SUMMARY</h3>", unsafe_allow_html=True)
                             c1, c2, c3, c4 = st.columns(4)
-                            c1.metric("📌 OPENING BAL", f"₹ {result['op_bal']:,.2f}")
-                            c2.metric(f"🔴 DEBITS ({result['dr_count']})", f"₹ {result['total_dr']:,.2f}")
-                            c3.metric(f"🟢 CREDITS ({result['cr_count']})", f"₹ {result['total_cr']:,.2f}")
-                            c4.metric("🏁 CLOSING BAL", f"₹ {result['cl_bal']:,.2f}")
-                            st.success("✅ EXACT COLUMNS EXTRACTED. LEDGERS AUTO-MAPPED.")
+                            c1.metric("📌 OPENING BALANCE", f"₹ {result['op_bal']:,.2f}")
+                            c2.metric(f"🔴 NO. OF DEBITS", f"{result['dr_count']} Entries")
+                            c3.metric(f"🟢 NO. OF CREDITS", f"{result['cr_count']} Entries")
+                            c4.metric("🏁 CLOSING BALANCE", f"₹ {result['cl_bal']:,.2f}")
+                            st.markdown("</div>", unsafe_allow_html=True)
+                            
                         else:
                             st.error(result)
                             
@@ -205,32 +202,4 @@ with tab1:
                         })
                         st.success("PDF Invoice Deep Scan Complete.")
                         
-                    elif uploaded_file.name.endswith(('.xlsx', '.csv')):
-                        df_bill = pd.read_excel(uploaded_file) if uploaded_file.name.endswith('.xlsx') else pd.read_csv(uploaded_file)
-                        df_bill.dropna(how='all', inplace=True)
-                        df_bill.dropna(axis=1, how='all', inplace=True)
-                        
-                        full_text = df_bill.to_string()
-                        found = list(set(re.findall(gstin_pattern, full_text)))
-                        
-                        st.session_state.master_data = df_bill
-                        st.success(f"✅ EXCEL INVOICE LOADED. GSTINs Detected: {', '.join(found) if found else 'NONE'}")
-
-            except Exception as e:
-                st.error(f"SYSTEM HALT: Critical Error Encountered -> {str(e)}")
-
-    if 'master_data' in st.session_state:
-        st.markdown("### 🗃️ TALLY INJECTION READY DATA")
-        st.dataframe(st.session_state.master_data, use_container_width=True)
-
-with tab2:
-    st.subheader("COGNITIVE AI MAPPER")
-    st.info("System awaiting final confirmation of XML Ledger Masters.")
-
-with tab3:
-    st.subheader("GSTR INVISIBLE BOT")
-    st.info("Stealth mode active. Awaiting targets.")
-
-with tab4:
-    st.subheader("TALLY INJECTION PROTOCOL")
-    st.warning("XML Push paused pending Ledger Mapping.")
+                    elif
