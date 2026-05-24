@@ -69,9 +69,4 @@ with tab1:
     uploaded_file = st.file_uploader("Upload Target File (PDF, XLSX, CSV)", type=["pdf", "xlsx", "csv"])
     
     if uploaded_file and st.button("RUN PRO CA SCAN"):
-        with st.spinner("Executing Aggressive Extraction & Validation Protocol..."):
-            try:
-                extracted_df = pd.DataFrame()
-                
-                # ==========================================
-                # 🛠️ EXCEL
+        with st.
