@@ -55,23 +55,3 @@ def clean_currency(val):
     v_str = str(val).upper().replace(',', '').replace('₹', '').replace(' ', '').strip()
     v_str = re.sub(r'[A-Z]', '', v_str) # Removes Cr, Dr, etc.
     if v_str == '' or v_str == '-': return 0.0
-    try: return float(v_str)
-    except: return 0.0
-
-def process_bank_excel(file):
-    """Pro Developer Logic: Scans Excel to dynamically find header and reconcile."""
-    df_raw = pd.read_excel(file) if file.name.endswith('.xlsx') else pd.read_csv(file)
-    
-    # Hunt for the actual table header
-    header_idx = -1
-    for idx, row in df_raw.iterrows():
-        row_str = " ".join(str(x).lower() for x in row.values)
-        if 'date' in row_str and ('narration' in row_str or 'particular' in row_str or 'description' in row_str):
-            header_idx = idx
-            break
-            
-    if header_idx == -1:
-        return None, "Error: Could not identify standard Bank headers (Date, Narration, Balance) in this file."
-
-    # Load cleaned frame
-    df = pd.read_excel(file, skiprows=header_idx +
