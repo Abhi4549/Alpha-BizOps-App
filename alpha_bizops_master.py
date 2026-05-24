@@ -38,7 +38,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<h1>🥷 ALPHA BIZOPS [SUPREME CA ENGINE]</h1>", unsafe_allow_html=True)
+st.markdown("<h1>🥷 ALPHA BIZOPS [PRO CA ENGINE]</h1>", unsafe_allow_html=True)
 st.markdown(f"<p class='terminal-font'>SYSTEM PROTOCOL: SECURE | DB: {db_status}</p>", unsafe_allow_html=True)
 st.markdown("---")
 
@@ -48,7 +48,7 @@ host_gstin = st.sidebar.text_input("Host GSTIN", value="07ALPHAXX1Z")
 stealth_mode = st.sidebar.toggle("🛡️ STEALTH PROTOCOL", value=True)
 
 # ==========================================
-# 🛠️ 3. SURGICAL DATA CLEANING & TALLY MAPPER
+# 🛠️ 3. PRO DATA CLEANING & TALLY MAPPER
 # ==========================================
 def extract_pure_number(val):
     if pd.isna(val) or str(val).strip() == "": return 0.0
@@ -66,7 +66,8 @@ def map_tally_ledger(narration):
         "amazon": "Computer Accessories", "aws": "Software Subscriptions",
         "airtel": "Telephone Expenses", "jio": "Telephone Expenses",
         "hdfc": "Bank Charges", "icici": "Bank Charges", "sbi": "Bank Charges",
-        "salary": "Staff Salary A/c", "rent": "Office Rent A/c", "gst": "GST Payable"
+        "salary": "Staff Salary A/c", "rent": "Office Rent A/c", "gst": "GST Payable",
+        "upi": "UPI Suspense A/c"
     }
     for key, ledger in tally_masters.items():
         if key in narration_lower:
@@ -74,52 +75,69 @@ def map_tally_ledger(narration):
     return "🟡 Suspense A/c"
 
 def process_bank_excel(file):
-    df_raw = pd.read_excel(file) if file.name.endswith('.xlsx') else pd.read_csv(file)
+    # Pro Logic 1: Read without headers to find the actual table start
+    try:
+        df_raw = pd.read_excel(file, header=None) if file.name.endswith('.xlsx') else pd.read_csv(file, header=None)
+    except Exception as e:
+        return None, f"System Error: Could not read the file format. Detail: {e}"
     
+    # Pro Logic 2: Fuzzy Header Hunter
     header_idx = -1
     for idx, row in df_raw.iterrows():
-        row_str = " ".join(str(x).lower() for x in row.values)
-        if ('date' in row_str or 'txn date' in row_str or 'value date' in row_str) and \
-           ('narration' in row_str or 'particular' in row_str or 'description' in row_str or 'remarks' in row_str):
+        row_str = " ".join(str(x).lower() for x in row.values if pd.notna(x))
+        if ('date' in row_str or 'txn' in row_str or 'dt' in row_str) and \
+           ('bal' in row_str or 'credit' in row_str or 'debit' in row_str or 'withdraw' in row_str or 'deposit' in row_str):
             header_idx = idx
             break
             
     if header_idx == -1:
-        return None, "Error: Could not identify standard Bank headers (Date, Particulars/Narration). Ensure it's a valid statement."
+        return None, "Error: PRO Engine could not find Bank Header row. Is this a valid Bank Statement?"
 
-    df = pd.read_excel(file, skiprows=header_idx + 1) if file.name.endswith('.xlsx') else pd.read_csv(file, skiprows=header_idx + 1)
-    df.columns = [str(c).lower().replace('\n', ' ').strip() for c in df.columns]
+    # Reload with correct header
+    df = pd.read_excel(file, skiprows=header_idx) if file.name.endswith('.xlsx') else pd.read_csv(file, skiprows=header_idx)
     
     date_c, desc_c, debit_c, credit_c, bal_c = None, None, None, None, None
-    for c in df.columns:
-        if any(w in c for w in ['date', 'txn']) and not date_c: date_c = c
-        elif any(w in c for w in ['narration', 'particular', 'description', 'remarks']) and not desc_c: desc_c = c
-        elif any(w in c for w in ['debit', 'withdrawal', 'dr', 'payout']) and not debit_c: debit_c = c
-        elif any(w in c for w in ['credit', 'deposit', 'cr', 'payin']) and not credit_c: credit_c = c
-        elif any(w in c for w in ['balance', 'bal']) and not bal_c: bal_c = c
+    for col in df.columns:
+        c = str(col).lower().replace('\n', ' ').replace('.', '').strip()
+        if not date_c and any(w in c for w in ['date', 'value dt', 'txn dt', 'transaction dt']): date_c = col
+        elif not desc_c and any(w in c for w in ['narration', 'particular', 'description', 'remark', 'details']): desc_c = col
+        elif not debit_c and any(w in c for w in ['debit', 'withdrawal', 'dr', 'paid out']): debit_c = col
+        elif not credit_c and any(w in c for w in ['credit', 'deposit', 'cr', 'paid in']): credit_c = col
+        elif not bal_c and any(w in c for w in ['balance', 'bal', 'closing']): bal_c = col
 
     if not (debit_c and credit_c and bal_c and date_c and desc_c):
-        return None, f"Error: Could not cleanly separate Date, Narration, Debit, and Credit. Found columns: {list(df.columns)}"
+        return None, f"Error: Failed to separate exact columns. System identified: {list(df.columns)}"
 
+    # Pro Logic 3: Surgical Cleaning
     df.dropna(subset=[date_c], inplace=True)
-    
     df[debit_c] = df[debit_c].apply(extract_pure_number)
     df[credit_c] = df[credit_c].apply(extract_pure_number)
     df[bal_c] = df[bal_c].apply(extract_pure_number)
 
-    valid_bals = df[df[bal_c] != 0.0][bal_c]
+    # Pro Logic 4: Temporary Balance tracking for exact metrics
+    df_temp = pd.DataFrame()
+    df_temp['Bal'] = df[bal_c]
+    valid_bals = df_temp[df_temp['Bal'] != 0.0]['Bal']
+    
     metrics = {
         "op_bal": valid_bals.iloc[0] if not valid_bals.empty else 0.0,
         "cl_bal": valid_bals.iloc[-1] if not valid_bals.empty else 0.0,
-        "dr_count": int((df[debit_c] > 0).sum()),
-        "cr_count": int((df[credit_c] > 0).sum())
     }
 
+    # Pro Logic 5: Strict 5-Column Output Matrix
     df_clean = pd.DataFrame()
-    df_clean["Date"] = df[date_c]
+    df_clean["Date"] = df[date_c].astype(str).str.replace('00:00:00', '').str.strip()
     df_clean["Narration"] = df[desc_c].astype(str).str.replace('\n', ' ').str.strip()
     df_clean["Debit"] = df[debit_c]
     df_clean["Credit"] = df[credit_c]
+    
+    # Remove useless lines where both Debit and Credit are 0
+    df_clean = df_clean[(df_clean["Debit"] > 0) | (df_clean["Credit"] > 0)]
+    
+    # Calculate exact counts after cleaning junk rows
+    metrics["dr_count"] = int((df_clean["Debit"] > 0).sum())
+    metrics["cr_count"] = int((df_clean["Credit"] > 0).sum())
+
     df_clean["Tally Ledger"] = df_clean["Narration"].apply(map_tally_ledger)
         
     return df_clean, metrics
@@ -130,13 +148,13 @@ def process_bank_excel(file):
 tab1, tab2, tab3, tab4 = st.tabs(["[ 1 ] DEEP SCAN", "[ 2 ] AI LEDGER", "[ 3 ] GSTR BOT", "[ 4 ] TALLY PUSH"])
 
 with tab1:
-    st.subheader("OMNI-SCANNER: ENTERPRISE EDITION")
+    st.subheader("OMNI-SCANNER: PRO CA EDITION")
     scan_mode = st.radio("TARGET PROTOCOL:", ["🏦 Bank Statement (Excel/CSV/PDF)", "🧾 GST Invoice (PDF/Excel/CSV)"], horizontal=True)
     pdf_pw = st.text_input("PDF Encryption Key (Leave blank if none) 🔐", type="password")
     uploaded_file = st.file_uploader("Upload Secured File", type=["pdf", "xlsx", "csv"])
 
     if uploaded_file and st.button("EXECUTE PRO SCAN"):
-        with st.spinner("Executing Cognitive Extraction & Tally Mapping..."):
+        with st.spinner("Executing Fuzzy Header Hunt & CA Reconciliations..."):
             try:
                 # ---------------- BANK STATEMENT LOGIC ----------------
                 if scan_mode == "🏦 Bank Statement (Excel/CSV/PDF)":
@@ -146,7 +164,7 @@ with tab1:
                         if df is not None:
                             st.session_state.master_data = df
                             
-                            st.markdown("<div class='summary-box'><h3 style='text-align:center; color:#00FF41; margin-top:0;'>📊 SUPREME CA AUDIT SUMMARY</h3>", unsafe_allow_html=True)
+                            st.markdown("<div class='summary-box'><h3 style='text-align:center; color:#00FF41; margin-top:0;'>📊 PRO CA AUDIT SUMMARY</h3>", unsafe_allow_html=True)
                             c1, c2, c3, c4 = st.columns(4)
                             c1.metric("📌 OPENING BALANCE", f"₹ {result['op_bal']:,.2f}")
                             c2.metric(f"🔴 NO. OF DEBITS", f"{result['dr_count']} Entries")
@@ -208,7 +226,7 @@ with tab1:
                 st.error(f"SYSTEM HALT: Critical Error Encountered -> {str(e)}")
 
     if 'master_data' in st.session_state:
-        st.markdown("### 🗃️ SEPARATED TALLY DATA (DATE | NARRATION | DEBIT | CREDIT | LEDGER)")
+        st.markdown("### 🗃️ TALLY INJECTION READY DATA (DATE | NARRATION | DEBIT | CREDIT | LEDGER)")
         st.dataframe(st.session_state.master_data, use_container_width=True)
 
 with tab2:
