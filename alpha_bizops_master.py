@@ -38,7 +38,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<h1>🥷 ALPHA BIZOPS [PRO CA ENGINE]</h1>", unsafe_allow_html=True)
+st.markdown("<h1>🥷 ALPHA BIZOPS [STRICT CA ENGINE]</h1>", unsafe_allow_html=True)
 st.markdown(f"<p class='terminal-font'>SYSTEM PROTOCOL: SECURE | DB: {db_status}</p>", unsafe_allow_html=True)
 st.markdown("---")
 
@@ -48,7 +48,7 @@ host_gstin = st.sidebar.text_input("Host GSTIN", value="07ALPHAXX1Z")
 stealth_mode = st.sidebar.toggle("🛡️ STEALTH PROTOCOL", value=True)
 
 # ==========================================
-# 🛠️ 3. PRO DATA CLEANING & TALLY MAPPER
+# 🛠️ 3. STRICT DATA CLEANING & TALLY MAPPER
 # ==========================================
 def extract_pure_number(val):
     if pd.isna(val) or str(val).strip() == "": return 0.0
@@ -61,84 +61,83 @@ def extract_pure_number(val):
 
 def map_tally_ledger(narration):
     narration_lower = str(narration).lower()
+    
+    # AI Memory Rules
     tally_masters = {
         "zomato": "Office Welfare", "swiggy": "Office Welfare",
         "amazon": "Computer Accessories", "aws": "Software Subscriptions",
         "airtel": "Telephone Expenses", "jio": "Telephone Expenses",
         "hdfc": "Bank Charges", "icici": "Bank Charges", "sbi": "Bank Charges",
-        "salary": "Staff Salary A/c", "rent": "Office Rent A/c", "gst": "GST Payable",
-        "upi": "UPI Suspense A/c"
+        "salary": "Staff Salary A/c", "rent": "Office Rent A/c", "gst": "GST Payable"
     }
+    
+    # Agar match hua toh Ledger, warna seedha Suspense
     for key, ledger in tally_masters.items():
         if key in narration_lower:
             return f"🟢 {ledger}"
+            
     return "🟡 Suspense A/c"
 
 def process_bank_excel(file):
-    # Pro Logic 1: Read without headers to find the actual table start
     try:
         df_raw = pd.read_excel(file, header=None) if file.name.endswith('.xlsx') else pd.read_csv(file, header=None)
     except Exception as e:
-        return None, f"System Error: Could not read the file format. Detail: {e}"
+        return None, f"System Error: Could not read file. {e}"
     
-    # Pro Logic 2: Fuzzy Header Hunter
+    # Header Hunter
     header_idx = -1
     for idx, row in df_raw.iterrows():
         row_str = " ".join(str(x).lower() for x in row.values if pd.notna(x))
-        if ('date' in row_str or 'txn' in row_str or 'dt' in row_str) and \
-           ('bal' in row_str or 'credit' in row_str or 'debit' in row_str or 'withdraw' in row_str or 'deposit' in row_str):
+        if ('date' in row_str or 'txn' in row_str) and ('bal' in row_str or 'credit' in row_str or 'debit' in row_str):
             header_idx = idx
             break
             
     if header_idx == -1:
-        return None, "Error: PRO Engine could not find Bank Header row. Is this a valid Bank Statement?"
+        return None, "Error: Could not find Bank Header row (Date, Debit, Credit)."
 
-    # Reload with correct header
     df = pd.read_excel(file, skiprows=header_idx) if file.name.endswith('.xlsx') else pd.read_csv(file, skiprows=header_idx)
     
     date_c, desc_c, debit_c, credit_c, bal_c = None, None, None, None, None
     for col in df.columns:
         c = str(col).lower().replace('\n', ' ').replace('.', '').strip()
-        if not date_c and any(w in c for w in ['date', 'value dt', 'txn dt', 'transaction dt']): date_c = col
-        elif not desc_c and any(w in c for w in ['narration', 'particular', 'description', 'remark', 'details']): desc_c = col
+        if not date_c and any(w in c for w in ['date', 'value dt', 'txn dt']): date_c = col
+        elif not desc_c and any(w in c for w in ['narration', 'particular', 'description', 'remark']): desc_c = col
         elif not debit_c and any(w in c for w in ['debit', 'withdrawal', 'dr', 'paid out']): debit_c = col
         elif not credit_c and any(w in c for w in ['credit', 'deposit', 'cr', 'paid in']): credit_c = col
         elif not bal_c and any(w in c for w in ['balance', 'bal', 'closing']): bal_c = col
 
     if not (debit_c and credit_c and bal_c and date_c and desc_c):
-        return None, f"Error: Failed to separate exact columns. System identified: {list(df.columns)}"
+        return None, f"Error: Failed to map exact columns. Found: {list(df.columns)}"
 
-    # Pro Logic 3: Surgical Cleaning
-    df.dropna(subset=[date_c], inplace=True)
-    df[debit_c] = df[debit_c].apply(extract_pure_number)
-    df[credit_c] = df[credit_c].apply(extract_pure_number)
-    df[bal_c] = df[bal_c].apply(extract_pure_number)
-
-    # Pro Logic 4: Temporary Balance tracking for exact metrics
-    df_temp = pd.DataFrame()
-    df_temp['Bal'] = df[bal_c]
-    valid_bals = df_temp[df_temp['Bal'] != 0.0]['Bal']
-    
-    metrics = {
-        "op_bal": valid_bals.iloc[0] if not valid_bals.empty else 0.0,
-        "cl_bal": valid_bals.iloc[-1] if not valid_bals.empty else 0.0,
-    }
-
-    # Pro Logic 5: Strict 5-Column Output Matrix
+    # Brutal Table Formatter: Stripping down to exactly 5 columns
     df_clean = pd.DataFrame()
-    df_clean["Date"] = df[date_c].astype(str).str.replace('00:00:00', '').str.strip()
-    df_clean["Narration"] = df[desc_c].astype(str).str.replace('\n', ' ').str.strip()
-    df_clean["Debit"] = df[debit_c]
-    df_clean["Credit"] = df[credit_c]
     
-    # Remove useless lines where both Debit and Credit are 0
+    # 1. Date
+    df_clean["Date"] = df[date_c].astype(str).str.replace('00:00:00', '').str.strip()
+    
+    # 2. Narration
+    df_clean["Narration"] = df[desc_c].astype(str).str.replace('\n', ' ').str.strip()
+    
+    # 3 & 4. Debit and Credit (Cleaned numbers)
+    df_clean["Debit"] = df[debit_c].apply(extract_pure_number)
+    df_clean["Credit"] = df[credit_c].apply(extract_pure_number)
+    
+    # Remove junk rows (where both debit and credit are 0)
     df_clean = df_clean[(df_clean["Debit"] > 0) | (df_clean["Credit"] > 0)]
     
-    # Calculate exact counts after cleaning junk rows
-    metrics["dr_count"] = int((df_clean["Debit"] > 0).sum())
-    metrics["cr_count"] = int((df_clean["Credit"] > 0).sum())
-
+    # 5. Tally Ledger (Strict mapping to rules or Suspense A/c)
     df_clean["Tally Ledger"] = df_clean["Narration"].apply(map_tally_ledger)
+
+    # Metrics Calculation using original Balance column for accuracy
+    df_temp_bal = df[bal_c].apply(extract_pure_number)
+    df_temp_bal = df_temp_bal[df_temp_bal != 0.0]
+    
+    metrics = {
+        "op_bal": df_temp_bal.iloc[0] if not df_temp_bal.empty else 0.0,
+        "cl_bal": df_temp_bal.iloc[-1] if not df_temp_bal.empty else 0.0,
+        "dr_count": int((df_clean["Debit"] > 0).sum()),
+        "cr_count": int((df_clean["Credit"] > 0).sum())
+    }
         
     return df_clean, metrics
 
@@ -148,23 +147,24 @@ def process_bank_excel(file):
 tab1, tab2, tab3, tab4 = st.tabs(["[ 1 ] DEEP SCAN", "[ 2 ] AI LEDGER", "[ 3 ] GSTR BOT", "[ 4 ] TALLY PUSH"])
 
 with tab1:
-    st.subheader("OMNI-SCANNER: PRO CA EDITION")
+    st.subheader("OMNI-SCANNER: ENTERPRISE EDITION")
     scan_mode = st.radio("TARGET PROTOCOL:", ["🏦 Bank Statement (Excel/CSV/PDF)", "🧾 GST Invoice (PDF/Excel/CSV)"], horizontal=True)
     pdf_pw = st.text_input("PDF Encryption Key (Leave blank if none) 🔐", type="password")
     uploaded_file = st.file_uploader("Upload Secured File", type=["pdf", "xlsx", "csv"])
 
     if uploaded_file and st.button("EXECUTE PRO SCAN"):
-        with st.spinner("Executing Fuzzy Header Hunt & CA Reconciliations..."):
+        with st.spinner("Executing Strict Table Formatting & AI Mapping..."):
             try:
                 # ---------------- BANK STATEMENT LOGIC ----------------
                 if scan_mode == "🏦 Bank Statement (Excel/CSV/PDF)":
                     if uploaded_file.name.endswith(('.xlsx', '.csv')):
-                        df, result = process_bank_excel(uploaded_file)
+                        df_final, result = process_bank_excel(uploaded_file)
                         
-                        if df is not None:
-                            st.session_state.master_data = df
+                        if df_final is not None:
+                            st.session_state.master_data = df_final
                             
-                            st.markdown("<div class='summary-box'><h3 style='text-align:center; color:#00FF41; margin-top:0;'>📊 PRO CA AUDIT SUMMARY</h3>", unsafe_allow_html=True)
+                            # Exact Audit Summary Box
+                            st.markdown("<div class='summary-box'><h3 style='text-align:center; color:#00FF41; margin-top:0;'>📊 STRICT CA AUDIT SUMMARY</h3>", unsafe_allow_html=True)
                             c1, c2, c3, c4 = st.columns(4)
                             c1.metric("📌 OPENING BALANCE", f"₹ {result['op_bal']:,.2f}")
                             c2.metric(f"🔴 NO. OF DEBITS", f"{result['dr_count']} Entries")
@@ -190,7 +190,7 @@ with tab1:
                         
                         if parsed:
                             st.session_state.master_data = pd.DataFrame(parsed)
-                            st.success(f"🔓 PDF Decrypted. Extracted {len(parsed)} valid financial entries.")
+                            st.success(f"🔓 PDF Decrypted. Extracted {len(parsed)} valid entries. Unmapped routed to Suspense.")
                         else:
                             st.warning("No tabular dates found in PDF. Ensure it's a standard bank format.")
 
@@ -225,8 +225,9 @@ with tab1:
             except Exception as e:
                 st.error(f"SYSTEM HALT: Critical Error Encountered -> {str(e)}")
 
+    # DISPLAY STRICT TABLE
     if 'master_data' in st.session_state:
-        st.markdown("### 🗃️ TALLY INJECTION READY DATA (DATE | NARRATION | DEBIT | CREDIT | LEDGER)")
+        st.markdown("### 🗃️ ISOLATED TALLY DATA (STRICT 5 COLUMNS)")
         st.dataframe(st.session_state.master_data, use_container_width=True)
 
 with tab2:
