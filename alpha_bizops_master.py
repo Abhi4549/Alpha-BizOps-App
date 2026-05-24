@@ -30,10 +30,10 @@ st.markdown("""
     .stButton>button:hover { background-color: #000000; color: #00FF41; box-shadow: 0 0 10px #00FF41; }
     .terminal-font { font-family: 'Courier New', Courier, monospace; color: #00FF41; }
     </style>
-""", unsafe_allowed_html=True)
+""", unsafe_allow_html=True)
 
-st.markdown("<h1>🥷 ALPHA BIZOPS</h1>", unsafe_allowed_html=True)
-st.markdown(f"<p class='terminal-font'>STATUS: SECURE | PROTOCOL: ACTIVE | DB: {db_status}</p>", unsafe_allowed_html=True)
+st.markdown("<h1>🥷 ALPHA BIZOPS</h1>", unsafe_allow_html=True)
+st.markdown(f"<p class='terminal-font'>STATUS: SECURE | PROTOCOL: ACTIVE | DB: {db_status}</p>", unsafe_allow_html=True)
 st.markdown("---")
 
 # ==========================================
@@ -107,7 +107,7 @@ with tab2:
 
 with tab3:
     st.subheader("GSTR INVISIBLE BOT")
-    st.markdown("<p class='terminal-font'>Deploying Headless Browser to GST Portal...</p>", unsafe_allowed_html=True)
+    st.markdown("<p class='terminal-font'>Deploying Headless Browser to GST Portal...</p>", unsafe_allow_html=True)
     
     if 'current_data' in st.session_state:
         if st.button("DEPLOY STEALTH BOT"):
