@@ -47,9 +47,10 @@ st.markdown(f"<p class='terminal-font'>SYSTEM PROTOCOL: SECURE | DB: {db_status}
 st.markdown("---")
 
 # Simulated Tally Masters (DB Mock)
-TALLY_MASTERS = ["Office Welfare", "Computer Accessories", "Software Subscriptions", 
-                 "Telephone Expenses", "Bank Charges", "Staff Salary A/c", 
-                 "Office Rent A/c", "GST Payable", "Suspense A/c"]
+if 'TALLY_MASTERS' not in st.session_state:
+    st.session_state.TALLY_MASTERS = ["Office Welfare", "Computer Accessories", "Software Subscriptions", 
+                                      "Telephone Expenses", "Bank Charges", "Staff Salary A/c", 
+                                      "Office Rent A/c", "GST Payable", "Suspense A/c"]
 
 # ==========================================
 # 🛠️ 3. PRO CA DATA ENGINES
@@ -198,7 +199,8 @@ with tab1:
 
 with tab2:
     st.subheader("2. TALLY MASTER SYNC & MAPPING")
-    if 'master_data' in st.session_state and st.session_state.data_type == "BANK":
+    # SAFE GUARD ADDED HERE USING .get()
+    if 'master_data' in st.session_state and st.session_state.get("data_type") == "BANK":
         st.markdown("<div class='vyapar-box'>", unsafe_allow_html=True)
         st.markdown("#### ⚡ VYAPAR BULK MAPPER")
         colA, colB, colC = st.columns([2, 2, 1])
@@ -218,14 +220,14 @@ with tab2:
         df_current = st.session_state.master_data
         unique_ledgers = df_current['Tally Ledger'].unique()
         
-        missing_masters = [l for l in unique_ledgers if l not in TALLY_MASTERS and l != "Suspense A/c"]
+        missing_masters = [l for l in unique_ledgers if l not in st.session_state.TALLY_MASTERS and l != "Suspense A/c"]
         if missing_masters:
             st.markdown("<div class='alert-box'><strong>⚠️ ATTENTION CA:</strong> The following ledgers are mapped but DO NOT EXIST in Tally Masters:</div>", unsafe_allow_html=True)
             for m in missing_masters:
                 c_a, c_b = st.columns([3, 1])
                 c_a.warning(f"Ledger: '{m}' is missing.")
-                if c_b.button(f"Create '{m}' in Tally", key=m):
-                    TALLY_MASTERS.append(m)
+                if c_b.button(f"Create '{m}' in Tally", key=f"btn_{m}"):
+                    st.session_state.TALLY_MASTERS.append(m)
                     st.rerun()
                     
         st.session_state.master_data = st.data_editor(df_current, use_container_width=True, num_rows="dynamic")
@@ -234,11 +236,12 @@ with tab2:
             st.session_state.ready_for_tally = True
             st.success("✅ DATA LOCKED. GO TO TAB 4 FOR TALLY PUSH.")
     else:
-        st.warning("Upload Bank Data in Tab 1 first.")
+        st.info("Awaiting Bank Statement extraction in Tab 1...")
 
 with tab3:
     st.subheader("3. GST & COMPLIANCE (GSTR-1 & 3B TRACKER)")
-    if 'bill_data' in st.session_state and st.session_state.data_type == "BILL":
+    # SAFE GUARD ADDED HERE USING .get()
+    if 'bill_data' in st.session_state and st.session_state.get("data_type") == "BILL":
         st.info("💡 Vyapar-style Bill Management. Track GST compliance and Payment status here.")
         edited_bills = st.data_editor(
             st.session_state.bill_data, 
@@ -251,7 +254,7 @@ with tab3:
         )
         st.session_state.bill_data = edited_bills
     else:
-        st.warning("Upload Bill/Invoice Data in Tab 1 first.")
+        st.info("Awaiting Bill/Invoice extraction in Tab 1...")
 
 with tab4:
     st.subheader("4. THE FINAL TALLY PUSH (XML INJECTION)")
