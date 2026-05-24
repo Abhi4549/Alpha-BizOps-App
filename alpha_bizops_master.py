@@ -49,7 +49,6 @@ stealth_mode = st.sidebar.toggle("🛡️ STEALTH PROTOCOL", value=True)
 def clean_amount(val):
     if pd.isna(val) or str(val).strip() == "" or str(val).strip() == "-": 
         return 0.0
-    # Extra symbols, commas, Cr/Dr sab kaat do
     val_str = str(val).replace(',', '').replace('₹', '').replace('Cr.', '').replace('Dr.', '').replace('Cr', '').replace('Dr', '').replace(' ', '').strip()
     try: 
         return float(val_str)
@@ -66,7 +65,4 @@ with tab1:
     
     scan_mode = st.radio("SELECT SCAN TARGET PROTOCOL:", ["🧾 GST Bill / Invoice", "🏦 Bank Statement"], horizontal=True)
     pdf_password = st.text_input("Enter PDF Password (If Protected, else leave blank) 🔐", type="password")
-    uploaded_file = st.file_uploader("Upload Target File (PDF, XLSX, CSV)", type=["pdf", "xlsx", "csv"])
-    
-    if uploaded_file and st.button("RUN PRO CA SCAN"):
-        with st.
+    uploaded_file = st.file_uploader("
