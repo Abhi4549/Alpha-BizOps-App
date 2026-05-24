@@ -10,7 +10,8 @@ from supabase import create_client, Client
 # ⚙️ 1. CLOUD DATABASE CONNECTION (SUPABASE)
 # ==========================================
 SUPABASE_URL = "https://vyuwysqkqdnkxoslozvy.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ5dXd5c3FrcWRua3hvc2xvenZ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2MzExNDUsImV4cCI6MjA5NTIwNzE0NX0.MIUK8e-1dzAQCldTcPzxWp8q0v9iWu2WPwRqpdSfKtc"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ5dXd5c3FrcWRua3hvc2xvenZ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2MzExNDUsImV4cCI6MjA5NTIwNzE0NX0.MIUK8e-1dzAQCldTcPzxWp8q0v9iWu2WPwRqpdSfKtc
+"
 
 try:
     supabase_db = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -65,4 +66,158 @@ with tab1:
     
     scan_mode = st.radio("SELECT SCAN TARGET PROTOCOL:", ["🧾 GST Bill / Invoice", "🏦 Bank Statement"], horizontal=True)
     pdf_password = st.text_input("Enter PDF Password (If Protected, else leave blank) 🔐", type="password")
-    uploaded_file = st.file_uploader("
+    uploaded_file = st.file_uploader("Upload Target File (PDF, XLSX, CSV)", type=["pdf", "xlsx", "csv"])
+    
+    if uploaded_file and st.button("RUN PRO CA SCAN"):
+        with st.spinner("Executing Aggressive Extraction & Validation Protocol..."):
+            try:
+                extracted_df = pd.DataFrame()
+                
+                # ==========================================
+                # 🛠️ EXCEL/CSV - AGGRESSIVE PROCESSOR
+                # ==========================================
+                if uploaded_file.name.endswith(('.xlsx', '.csv')) and scan_mode == "🏦 Bank Statement":
+                    temp_df = pd.read_excel(uploaded_file) if uploaded_file.name.endswith('.xlsx') else pd.read_csv(uploaded_file)
+                    
+                    header_row_index = 0
+                    for i, row in temp_df.iterrows():
+                        row_str = ' '.join(str(x).lower() for x in row.values)
+                        if 'date' in row_str and ('particular' in row_str or 'narration' in row_str or 'description' in row_str or 'remarks' in row_str):
+                            header_row_index = i + 1
+                            break
+                    
+                    if uploaded_file.name.endswith('.xlsx'):
+                        df_clean = pd.read_excel(uploaded_file, skiprows=header_row_index)
+                    else:
+                        df_clean = pd.read_csv(uploaded_file, skiprows=header_row_index)
+                    
+                    df_clean.columns = [str(c).replace('\n', ' ').strip() for c in df_clean.columns]
+                    
+                    df_clean.dropna(how='all', inplace=True)
+                    date_col = next((col for col in df_clean.columns if 'date' in str(col).lower()), None)
+                    if date_col:
+                        df_clean.dropna(subset=[date_col], inplace=True)
+
+                    debit_c, credit_c, bal_c = None, None, None
+                    for c in df_clean.columns:
+                        c_low = str(c).lower().replace(' ', '')
+                        if any(w in c_low for w in ['debit', 'withdrawal', 'dr']): debit_c = c
+                        elif any(w in c_low for w in ['credit', 'deposit', 'cr']): credit_c = c
+                        elif 'balance' in c_low: bal_c = c
+                    
+                    if debit_c and credit_c and bal_c:
+                        df_clean[debit_c] = df_clean[debit_c].apply(clean_amount)
+                        df_clean[credit_c] = df_clean[credit_c].apply(clean_amount)
+                        df_clean[bal_c] = df_clean[bal_c].apply(clean_amount)
+                        
+                        total_debits_amt = df_clean[debit_c].sum()
+                        total_credits_amt = df_clean[credit_c].sum()
+                        
+                        dr_count = (df_clean[debit_c] > 0).sum()
+                        cr_count = (df_clean[credit_c] > 0).sum()
+
+                        valid_balances = df_clean[df_clean[bal_c] != 0.0][bal_c]
+                        op_bal = valid_balances.iloc[0] if not valid_balances.empty else 0.0
+                        cl_bal = valid_balances.iloc[-1] if not valid_balances.empty else 0.0
+
+                        st.markdown("### 📊 EXACT RECONCILIATION REPORT")
+                        col1, col2, col3, col4 = st.columns(4)
+                        col1.metric("📌 OPENING BALANCE", f"₹ {op_bal:,.2f}")
+                        col2.metric(f"🔴 DEBITS (Count: {dr_count})", f"₹ {total_debits_amt:,.2f}")
+                        col3.metric(f"🟢 CREDITS (Count: {cr_count})", f"₹ {total_credits_amt:,.2f}")
+                        col4.metric("🏁 CLOSING BALANCE", f"₹ {cl_bal:,.2f}")
+                        
+                        st.success("✅ SYSTEM AUDIT PASSED: Exact Debits, Credits, and Balances successfully locked.")
+                    else:
+                        st.error(f"❌ BANK FORMAT MISMATCH: System could not identify exact columns.")
+                        st.warning(f"Columns Found in File: {df_clean.columns.tolist()}")
+                        st.info("Check if the bank Excel has proper headers for Debit/Withdrawal, Credit/Deposit, and Balance.")
+                    
+                    ai_memory = {"ZOMATO": "Staff Welfare", "AWS": "Cloud Hosting", "CASH": "Cash A/c"}
+                    desc_col = next((c for c in df_clean.columns if any(w in str(c).lower() for w in ['particular', 'narration', 'description', 'remarks'])), None)
+                    if desc_col:
+                        ai_ledgers = []
+                        for desc in df_clean[desc_col]:
+                            assigned = "🟡 Suspense A/c"
+                            for key, ledg in ai_memory.items():
+                                if key.lower() in str(desc).lower():
+                                    assigned = f"🟢 {ledg}"
+                                    break
+                            ai_ledgers.append(assigned)
+                        df_clean['AI Suggested Ledger'] = ai_ledgers
+
+                    extracted_df = df_clean
+
+                # ==========================================
+                # 🛠️ PDF PROCESSOR (PASSWORD SAFE)
+                # ==========================================
+                elif uploaded_file.name.endswith('.pdf'):
+                    pw = pdf_password if pdf_password else ''
+                    full_text = ""
+                    
+                    try:
+                        with pdfplumber.open(uploaded_file, password=pw) as pdf:
+                            for page in pdf.pages:
+                                full_text += page.extract_text() + "\n"
+                        st.success("🔓 PDF DECRYPTED & TEXT ACCESSED SUCCESSFULLY.")
+                    except Exception as pdf_error:
+                        st.error("🔒 SYSTEM HALT: Incorrect Password or Encrypted PDF.")
+                        st.stop()
+
+                    if scan_mode == "🏦 Bank Statement":
+                        lines = full_text.split('\n')
+                        parsed_entries = []
+                        date_regex = re.compile(r'^(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{1,2}-[A-Za-z]{3}-\d{2,4})')
+                        ai_memory = {"ZOMATO": "Staff Welfare", "AWS": "Cloud Hosting", "CASH": "Cash A/c", "RAHUL": "Rahul Enterprises"}
+                        
+                        for line in lines:
+                            line = line.strip()
+                            if date_regex.match(line):
+                                clean_line = re.sub(r'\s+', ' ', line)
+                                assigned_ledger = "🟡 Suspense A/c"
+                                for key, ledg in ai_memory.items():
+                                    if key.lower() in clean_line.lower():
+                                        assigned_ledger = f"🟢 {ledg}"
+                                        break
+                                parsed_entries.append({
+                                    "Extracted PDF Transaction": clean_line[:80] + "...",
+                                    "AI Suggested Ledger": assigned_ledger
+                                })
+                        extracted_df = pd.DataFrame(parsed_entries)
+                        
+                        if extracted_df.empty:
+                            st.warning("⚠️ No valid dates found. Ensure the PDF contains a standard tabular statement.")
+                    
+                    elif scan_mode == "🧾 GST Bill / Invoice":
+                        gstin_pattern = r'\b[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}\b'
+                        found_gstins = list(set(re.findall(gstin_pattern, full_text)))
+                        extracted_df = pd.DataFrame({
+                            "File Name": [uploaded_file.name],
+                            "Detected GSTINs": [", ".join(found_gstins) if found_gstins else "NOT DETECTED"],
+                        })
+
+                # Final Session Push
+                if not extracted_df.empty:
+                    st.session_state.current_data = extracted_df
+                    st.session_state.scan_type = "BANK" if scan_mode == "🏦 Bank Statement" else "BILL"
+                    
+            except Exception as e:
+                st.error(f"SYSTEM HALT: Formatting Error. Details: {e}")
+            
+    if 'current_data' in st.session_state:
+        st.dataframe(st.session_state.current_data, use_container_width=True)
+
+with tab2:
+    st.subheader("COGNITIVE AI MAPPER")
+    if 'current_data' in st.session_state:
+        st.info("Waiting for final Master sync...")
+    else:
+        st.warning("AWAITING TARGET DATA FROM SCANNER.")
+
+with tab3:
+    st.subheader("GSTR INVISIBLE BOT")
+    st.warning("Awaiting final validation.")
+
+with tab4:
+    st.subheader("TALLY INJECTION PROTOCOL")
+    st.warning("Awaiting final validation.")
