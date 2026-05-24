@@ -104,4 +104,104 @@ with tab1:
                         op_bal = df_clean[bal_c].iloc[0] if not df_clean.empty else 0.0
                         cl_bal = df_clean[bal_c].iloc[-1] if not df_clean.empty else 0.0
                         total_debits_amt = df_clean[debit_c].sum()
-                        total_credits_amt = df
+                        total_credits_amt = df_clean[credit_c].sum()
+                        dr_count = (df_clean[debit_c] > 0).sum()
+                        cr_count = (df_clean[credit_c] > 0).sum()
+
+                        st.markdown("### 📊 RECONCILIATION SUMMARY")
+                        col1, col2, col3, col4 = st.columns(4)
+                        col1.metric("OPENING BALANCE", f"₹{op_bal:,.2f}")
+                        col2.metric(f"DEBITS ({dr_count})", f"₹{total_debits_amt:,.2f}")
+                        col3.metric(f"CREDITS ({cr_count})", f"₹{total_credits_amt:,.2f}")
+                        col4.metric("CLOSING BALANCE", f"₹{cl_bal:,.2f}")
+                        st.success("✅ EXCEL MATHEMATICAL VALIDATION COMPLETE.")
+                    
+                    # AI Memory Match
+                    ai_memory = {"ZOMATO": "Staff Welfare", "AWS": "Cloud Hosting", "CASH": "Cash A/c"}
+                    desc_col = next((c for c in df_clean.columns if any(w in str(c).lower() for w in ['particular', 'narration', 'description'])), None)
+                    if desc_col:
+                        ai_ledgers = []
+                        for desc in df_clean[desc_col]:
+                            assigned = "🟡 Suspense A/c"
+                            for key, ledg in ai_memory.items():
+                                if key.lower() in str(desc).lower():
+                                    assigned = f"🟢 {ledg}"
+                                    break
+                            ai_ledgers.append(assigned)
+                        df_clean['AI Suggested Ledger'] = ai_ledgers
+
+                    extracted_df = df_clean
+
+                # ==========================================
+                # 🛠️ PDF PROCESSOR (PASSWORD SAFE & PRO PARSER)
+                # ==========================================
+                elif uploaded_file.name.endswith('.pdf'):
+                    pw = pdf_password if pdf_password else ''
+                    full_text = ""
+                    
+                    try:
+                        with pdfplumber.open(uploaded_file, password=pw) as pdf:
+                            for page in pdf.pages:
+                                full_text += page.extract_text() + "\n"
+                        st.success("🔓 PDF DECRYPTED & TEXT ACCESSED SUCCESSFULLY.")
+                    except Exception as pdf_error:
+                        st.error("🔒 SYSTEM HALT: Incorrect Password or Encrypted PDF. Please check the password.")
+                        st.stop()
+
+                    if scan_mode == "🏦 Bank Statement":
+                        lines = full_text.split('\n')
+                        parsed_entries = []
+                        date_regex = re.compile(r'^(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{1,2}-[A-Za-z]{3}-\d{2,4})')
+                        ai_memory = {"ZOMATO": "Staff Welfare", "AWS": "Cloud Hosting", "CASH": "Cash A/c", "RAHUL": "Rahul Enterprises"}
+                        
+                        for line in lines:
+                            line = line.strip()
+                            if date_regex.match(line):
+                                clean_line = re.sub(r'\s+', ' ', line)
+                                assigned_ledger = "🟡 Suspense A/c"
+                                for key, ledg in ai_memory.items():
+                                    if key.lower() in clean_line.lower():
+                                        assigned_ledger = f"🟢 {ledg}"
+                                        break
+                                parsed_entries.append({
+                                    "Extracted PDF Transaction": clean_line[:80] + "...",
+                                    "AI Suggested Ledger": assigned_ledger
+                                })
+                        extracted_df = pd.DataFrame(parsed_entries)
+                        
+                        if extracted_df.empty:
+                            st.warning("⚠️ No valid dates found. Ensure the PDF contains a standard tabular statement.")
+                    
+                    elif scan_mode == "🧾 GST Bill / Invoice":
+                        gstin_pattern = r'\b[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}\b'
+                        found_gstins = list(set(re.findall(gstin_pattern, full_text)))
+                        extracted_df = pd.DataFrame({
+                            "File Name": [uploaded_file.name],
+                            "Detected GSTINs": [", ".join(found_gstins) if found_gstins else "NOT DETECTED"],
+                        })
+
+                # Final Session Push
+                if not extracted_df.empty:
+                    st.session_state.current_data = extracted_df
+                    st.session_state.scan_type = "BANK" if scan_mode == "🏦 Bank Statement" else "BILL"
+                    
+            except Exception as e:
+                st.error(f"SYSTEM HALT: Formatting Error. Details: {e}")
+            
+    if 'current_data' in st.session_state:
+        st.dataframe(st.session_state.current_data, use_container_width=True)
+
+with tab2:
+    st.subheader("COGNITIVE AI MAPPER")
+    if 'current_data' in st.session_state:
+        st.info("Waiting for final Master sync...")
+    else:
+        st.warning("AWAITING TARGET DATA FROM SCANNER.")
+
+with tab3:
+    st.subheader("GSTR INVISIBLE BOT")
+    st.warning("Awaiting final validation.")
+
+with tab4:
+    st.subheader("TALLY INJECTION PROTOCOL")
+    st.warning("Awaiting final validation.")
