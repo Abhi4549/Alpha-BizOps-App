@@ -48,7 +48,7 @@ host_gstin = st.sidebar.text_input("Host GSTIN", value="07ALPHAXX1Z")
 stealth_mode = st.sidebar.toggle("🛡️ STEALTH PROTOCOL", value=True)
 
 # ==========================================
-# 🛠️ 3. STRICT DATA CLEANING & TALLY MAPPER
+# 🛠️ 3. STRICT DATA CLEANING ENGINE
 # ==========================================
 def extract_pure_number(val):
     if pd.isna(val) or str(val).strip() == "": return 0.0
@@ -59,32 +59,13 @@ def extract_pure_number(val):
         except: return 0.0
     return 0.0
 
-def map_tally_ledger(narration):
-    narration_lower = str(narration).lower()
-    
-    # AI Memory Rules
-    tally_masters = {
-        "zomato": "Office Welfare", "swiggy": "Office Welfare",
-        "amazon": "Computer Accessories", "aws": "Software Subscriptions",
-        "airtel": "Telephone Expenses", "jio": "Telephone Expenses",
-        "hdfc": "Bank Charges", "icici": "Bank Charges", "sbi": "Bank Charges",
-        "salary": "Staff Salary A/c", "rent": "Office Rent A/c", "gst": "GST Payable"
-    }
-    
-    # Agar match hua toh Ledger, warna seedha Suspense
-    for key, ledger in tally_masters.items():
-        if key in narration_lower:
-            return f"🟢 {ledger}"
-            
-    return "🟡 Suspense A/c"
-
 def process_bank_excel(file):
     try:
         df_raw = pd.read_excel(file, header=None) if file.name.endswith('.xlsx') else pd.read_csv(file, header=None)
     except Exception as e:
         return None, f"System Error: Could not read file. {e}"
     
-    # Header Hunter
+    # Target exact header row
     header_idx = -1
     for idx, row in df_raw.iterrows():
         row_str = " ".join(str(x).lower() for x in row.values if pd.notna(x))
@@ -97,6 +78,7 @@ def process_bank_excel(file):
 
     df = pd.read_excel(file, skiprows=header_idx) if file.name.endswith('.xlsx') else pd.read_csv(file, skiprows=header_idx)
     
+    # Identify exact columns
     date_c, desc_c, debit_c, credit_c, bal_c = None, None, None, None, None
     for col in df.columns:
         c = str(col).lower().replace('\n', ' ').replace('.', '').strip()
@@ -109,7 +91,9 @@ def process_bank_excel(file):
     if not (debit_c and credit_c and bal_c and date_c and desc_c):
         return None, f"Error: Failed to map exact columns. Found: {list(df.columns)}"
 
-    # Brutal Table Formatter: Stripping down to exactly 5 columns
+    # =====================================
+    # 🗃️ BRUTAL TABLE FORMATTER (5 STRICT COLS)
+    # =====================================
     df_clean = pd.DataFrame()
     
     # 1. Date
@@ -118,17 +102,17 @@ def process_bank_excel(file):
     # 2. Narration
     df_clean["Narration"] = df[desc_c].astype(str).str.replace('\n', ' ').str.strip()
     
-    # 3 & 4. Debit and Credit (Cleaned numbers)
+    # 3 & 4. Debit and Credit (Clean numbers only)
     df_clean["Debit"] = df[debit_c].apply(extract_pure_number)
     df_clean["Credit"] = df[credit_c].apply(extract_pure_number)
     
     # Remove junk rows (where both debit and credit are 0)
     df_clean = df_clean[(df_clean["Debit"] > 0) | (df_clean["Credit"] > 0)]
     
-    # 5. Tally Ledger (Strict mapping to rules or Suspense A/c)
-    df_clean["Tally Ledger"] = df_clean["Narration"].apply(map_tally_ledger)
+    # 5. Tally Ledger - EVERYTHING GOES TO SUSPENSE INITIALLY
+    df_clean["Tally Ledger"] = "🟡 Suspense A/c"
 
-    # Metrics Calculation using original Balance column for accuracy
+    # Exact Audit Metrics from original balance column
     df_temp_bal = df[bal_c].apply(extract_pure_number)
     df_temp_bal = df_temp_bal[df_temp_bal != 0.0]
     
@@ -153,7 +137,7 @@ with tab1:
     uploaded_file = st.file_uploader("Upload Secured File", type=["pdf", "xlsx", "csv"])
 
     if uploaded_file and st.button("EXECUTE PRO SCAN"):
-        with st.spinner("Executing Strict Table Formatting & AI Mapping..."):
+        with st.spinner("Executing Strict Table Formatting & Suspense Routing..."):
             try:
                 # ---------------- BANK STATEMENT LOGIC ----------------
                 if scan_mode == "🏦 Bank Statement (Excel/CSV/PDF)":
@@ -186,11 +170,11 @@ with tab1:
                         for line in extracted_text.split('\n'):
                             if date_rx.match(line.strip()):
                                 clean = re.sub(r'\s+', ' ', line.strip())
-                                parsed.append({"Date & Narration": clean[:90] + "...", "Tally Ledger": map_tally_ledger(clean)})
+                                parsed.append({"Date": clean.split()[0], "Narration": clean[:90] + "...", "Debit": 0.0, "Credit": 0.0, "Tally Ledger": "🟡 Suspense A/c"})
                         
                         if parsed:
                             st.session_state.master_data = pd.DataFrame(parsed)
-                            st.success(f"🔓 PDF Decrypted. Extracted {len(parsed)} valid entries. Unmapped routed to Suspense.")
+                            st.success(f"🔓 PDF Decrypted. Extracted {len(parsed)} valid entries. ALL ROUTED TO SUSPENSE INITIALLY.")
                         else:
                             st.warning("No tabular dates found in PDF. Ensure it's a standard bank format.")
 
@@ -227,12 +211,12 @@ with tab1:
 
     # DISPLAY STRICT TABLE
     if 'master_data' in st.session_state:
-        st.markdown("### 🗃️ ISOLATED TALLY DATA (STRICT 5 COLUMNS)")
+        st.markdown("### 🗃️ ISOLATED DATA (100% ROUTED TO SUSPENSE)")
         st.dataframe(st.session_state.master_data, use_container_width=True)
 
 with tab2:
-    st.subheader("COGNITIVE AI MAPPER")
-    st.info("System awaiting final confirmation of XML Ledger Masters.")
+    st.subheader("COGNITIVE AI MAPPER (DB MEMORY)")
+    st.info("Mapping engine will pull from Supabase DB memory here to resolve Suspense A/c before Tally execution.")
 
 with tab3:
     st.subheader("GSTR INVISIBLE BOT")
@@ -240,4 +224,4 @@ with tab3:
 
 with tab4:
     st.subheader("TALLY INJECTION PROTOCOL")
-    st.warning("XML Push paused pending Ledger Mapping.")
+    st.warning("XML Push paused. Awaiting DB Memory Ledger mapping.")
