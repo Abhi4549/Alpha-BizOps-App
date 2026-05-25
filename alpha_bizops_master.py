@@ -1,42 +1,54 @@
 import streamlit as st
+from datetime import datetime
 from logic.models import Party, Voucher
 from logic.accounting import AccountingEngine
+from logic.db_manager import init_db, save_invoice, get_all_invoices
 from logic.engine import create_tally_voucher_xml
 
+# 1. App Configuration
 st.set_page_config(page_title="Alpha Vyapar Pro", layout="wide")
+init_db() # Database start
 
 st.title("🥷 ALPHA VYAPAR PRO | ENTERPRISE ERP")
 
-# Sidebar Navigation
-menu = st.sidebar.selectbox("Main Menu", ["Dashboard", "Sales Invoice", "Tally Sync"])
+# 2. Sidebar Navigation
+menu = st.sidebar.radio("Navigation", ["Dashboard", "Sales Invoice", "Ledger Sync", "Tally XML"])
 
+# 3. DASHBOARD PANEL
 if menu == "Dashboard":
-    st.subheader("Financial Health Overview")
-    # Yahan hum future mein live graph daalenge
+    st.subheader("Financial Overview")
+    invoices = get_all_invoices()
+    total_sales = sum([inv[2] for inv in invoices])
     c1, c2, c3 = st.columns(3)
-    c1.metric("Total Sales", "₹ 0.00")
-    c2.metric("GST Payable", "₹ 0.00")
-    c3.metric("Outstanding", "₹ 0.00")
+    c1.metric("Total Sales", f"₹ {total_sales:,.2f}")
+    c2.metric("Total Invoices", len(invoices))
+    st.dataframe(invoices, use_container_width=True)
 
+# 4. SALES INVOICE PANEL
 elif menu == "Sales Invoice":
-    st.subheader("Generate GST Sales Invoice")
+    st.subheader("GST Sales Invoice Generator")
     with st.form("invoice_form"):
         col1, col2 = st.columns(2)
         party_name = col1.text_input("Party Name")
-        taxable_amt = col2.number_input("Taxable Amount (₹)", min_value=0.0)
-        gst_rate = st.slider("GST Rate (%)", 0, 28, 18)
+        amt = col2.number_input("Taxable Amount", min_value=0.0)
+        gst = st.slider("GST Rate (%)", 0, 28, 18)
         
-        submitted = st.form_submit_button("Generate & Calculate")
-        if submitted:
-            cgst, sgst, total_tax = AccountingEngine.calculate_tax(taxable_amt, gst_rate)
-            st.write(f"CGST: ₹{cgst} | SGST: ₹{sgst}")
-            st.write(f"Total Amount: ₹{taxable_amt + total_tax}")
-            
-            # Voucher save karne ka logic (Mock)
-            st.success("Invoice Details Saved Successfully!")
+        if st.form_submit_button("Save & Generate"):
+            # Calculate Tax
+            cgst, sgst, tax = AccountingEngine.calculate_tax(amt, gst)
+            # Save to DB
+            save_invoice(party_name, amt + tax, gst, str(datetime.now().date()))
+            st.success(f"Invoice Saved! Total: ₹{amt + tax:,.2f}")
 
-elif menu == "Tally Sync":
-    st.subheader("Tally Native XML Export")
-    if st.button("Generate Tally Import File"):
-        # Yahan hum logic.engine ko call karenge
-        st.info("Vouchers fetched from DB...")
+# 5. TALLY XML GENERATOR
+elif menu == "Tally XML":
+    st.subheader("Generate Tally Import XML")
+    if st.button("Export All Data"):
+        invoices = get_all_invoices()
+        xml_output = "<ENVELOPE><TALLYMESSAGE>"
+        for inv in invoices:
+            # Fake mapping for demo
+            xml_output += f"<VOUCHER><PARTY>{inv[1]}</PARTY><AMOUNT>{inv[2]}</AMOUNT></VOUCHER>"
+        xml_output += "</TALLYMESSAGE></ENVELOPE>"
+        st.code(xml_output, language="xml")
+        st.download_button("Download XML", xml_output, "tally_import.xml")
