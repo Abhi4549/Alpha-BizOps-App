@@ -1,24 +1,18 @@
 import streamlit as st
-from modules.bank_processor import process_bank_statement
+from logic.models import Party, InventoryItem, Voucher
 
-st.set_page_config(layout="wide")
-st.title("🥷 ALPHA BIZOPS [PDF PARSER]")
+st.set_page_config(layout="wide", page_title="Alpha Vyapar Pro")
 
-tab1, tab2 = st.tabs(["[1] Upload & Extract", "[2] Tally Mapper"])
+st.sidebar.title("🥷 ALPHA VYAPAR PRO")
+menu = st.sidebar.radio("Navigation", ["Dashboard", "Sales Invoice", "GST Reports", "Tally Sync"])
 
-with tab1:
-    file = st.file_uploader("Upload Bank PDF")
-    pw = st.text_input("PDF Password", type="password")
+if menu == "Dashboard":
+    st.title("📊 Financial Overview")
+    # Yahan hum P&L aur Stock ka logic layenge
     
-    if file and st.button("Extract Data"):
-        df, metrics = process_bank_statement(file, pdf_pw=pw)
-        if df is not None:
-            st.session_state.data = df
-            # Audit Summary
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Entries", metrics['total_entries'])
-            c2.metric("Debit Total", f"₹{metrics['total_dr']:,.2f}")
-            c3.metric("Credit Total", f"₹{metrics['total_cr']:,.2f}")
-            st.dataframe(df)
-        else:
-            st.error(metrics)
+elif menu == "Sales Invoice":
+    st.title("🧾 Generate Invoice")
+    # Invoice banne ka logic
+    party_name = st.text_input("Party Name")
+    if st.button("Save Invoice"):
+        st.success(f"Invoice for {party_name} saved!")
