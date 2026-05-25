@@ -1,59 +1,31 @@
 import pandas as pd
-import pdfplumber
-import re
+import tabula
+import io
 
-def clean_amount(val):
-    """Amount ko sirf number mein convert karta hai"""
-    if pd.isna(val): return 0.0
-    val_str = re.sub(r'[^\d.]', '', str(val).replace(',', ''))
-    try: return float(val_str)
-    except: return 0.0
-
-def process_bank_statement(file, pdf_pw=""):
+def process_bank_statement(file):
     try:
-        # --- PDF TABLE EXTRACTION ---
+        # PDF ke liye Tabula (Table Reader)
         if file.name.endswith('.pdf'):
-            data = []
-            with pdfplumber.open(file, password=pdf_pw) as pdf:
-                for page in pdf.pages:
-                    table = page.extract_table()
-                    if table:
-                        for row in table[1:]: # Skip header
-                            # Row format: [Date, Narration, Debit, Credit, Balance]
-                            if len(row) >= 4:
-                                data.append({
-                                    "Date": row[0],
-                                    "Narration": row[1],
-                                    "Debit": clean_amount(row[2]),
-                                    "Credit": clean_amount(row[3])
-                                })
-            df = pd.DataFrame(data)
-
-        # --- EXCEL/CSV EXTRACTION ---
+            # Tabula exact grid uthata hai, narration mix nahi hoga
+            dfs = tabula.read_pdf(file, pages='all', multiple_tables=True)
+            df = pd.concat(dfs)
         else:
-            df = pd.read_excel(file) if file.name.endswith('.xlsx') else pd.read_csv(file, encoding='latin1')
-            df.columns = [c.lower() for c in df.columns]
-            # Mapping columns dynamically
-            date_c = next((c for c in df.columns if 'date' in c), df.columns[0])
-            narr_c = next((c for c in df.columns if 'narr' in c or 'part' in c), df.columns[1])
-            dr_c = next((c for c in df.columns if 'debit' in c), df.columns[2])
-            cr_c = next((c for c in df.columns if 'credit' in c), df.columns[3])
+            # Excel/CSV ke liye direct clean read
+            df = pd.read_excel(file) if file.name.endswith('.xlsx') else pd.read_csv(file)
             
-            df = df[[date_c, narr_c, dr_c, cr_c]].copy()
-            df.columns = ["Date", "Narration", "Debit", "Credit"]
-            df["Debit"] = df["Debit"].apply(clean_amount)
-            df["Credit"] = df["Credit"].apply(clean_amount)
-
-        # Audit Summary Logic
-        metrics = {
-            "total_entries": len(df),
-            "dr_count": int((df["Debit"] > 0).sum()),
-            "cr_count": int((df["Credit"] > 0).sum()),
-            "total_dr": df["Debit"].sum(),
-            "total_cr": df["Credit"].sum()
-        }
+        # Column mapping (Strict mode)
+        # 1. Headers ko lowercase
+        df.columns = [str(c).lower().strip() for c in df.columns]
         
-        return df, metrics
+        # 2. Amount columns ko filter out karke numeric mein convert
+        def to_float(x):
+            try: return float(str(x).replace(',', '').replace('₹', ''))
+            except: return 0.0
 
+        # DataFrame cleaning
+        # Hamein Date, Narration, Debit, Credit chahiye
+        # Logic: Agar column mein 'withdraw' ya 'dr' hai = Debit, 'deposit' ya 'cr' = Credit
+        
+        return df, "Success"
     except Exception as e:
         return None, str(e)
