@@ -5,8 +5,8 @@ import pandas as pd
 def classify_invoice(text):
     text_lower = text.lower()
     if any(word in text_lower for word in ['tax invoice', 'bill to', 'retail invoice', 'cash memo']):
-        return "Sales" # Tally Voucher Type
-    return "Purchase" # Tally Voucher Type
+        return "Sales"
+    return "Purchase"
 
 def process_invoice_pdf(file, pdf_pw=""):
     try:
@@ -18,7 +18,8 @@ def process_invoice_pdf(file, pdf_pw=""):
                 full_text += page.extract_text() + "\n"
                 tables = page.extract_tables()
                 for t in tables:
-                    extracted_tables.extend(t)
+                    if t:
+                        extracted_tables.extend(t)
         
         # --- 1. HEADER EXTRACTION FOR TALLY ---
         gstin_pat = r'\b[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}\b'
@@ -42,7 +43,9 @@ def process_invoice_pdf(file, pdf_pw=""):
         
         if extracted_tables:
             for row in extracted_tables:
+                if not row: continue
                 row_str = " ".join(str(cell).lower() for cell in row if cell)
+                
                 # Skip Header rows
                 if 'hsn' in row_str or 'qty' in row_str or 'rate' in row_str:
                     continue
@@ -50,7 +53,6 @@ def process_invoice_pdf(file, pdf_pw=""):
                 # Intelligent Mapping to Tally Columns (Item Name, HSN, Qty, Rate, Amount)
                 clean_row = [str(cell).replace('\n', ' ').strip() if cell else "" for cell in row]
                 
-                # Basic heuristic to find numbers vs text
                 item_name = clean_row[0] if len(clean_row) > 0 else "Default Item"
                 hsn = ""
                 qty = "1"
@@ -82,4 +84,9 @@ def process_invoice_pdf(file, pdf_pw=""):
             df_items = pd.DataFrame(items_list, columns=["Item Name", "HSN", "Qty", "Rate", "Amount"])
         else:
             # Fallback if table parsing fails perfectly
-            df_items = pd.DataFrame([["Misc Item", "9999", "1", amounts[0] if amounts else "0", amounts[0] if amounts else "0"]], columns=["Item Name", "HSN", "Qty", "
+            df_items = pd.DataFrame([["Misc Item", "9999", "1", amounts[0] if amounts else "0", amounts[0] if amounts else "0"]], columns=["Item Name", "HSN", "Qty", "Rate", "Amount"])
+
+        return df_main, df_items, "Success"
+        
+    except Exception as e:
+        return None, None, f"PDF Extraction Failed: {str(e)}"
