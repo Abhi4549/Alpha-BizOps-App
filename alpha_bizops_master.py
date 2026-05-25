@@ -30,6 +30,7 @@ st.markdown("""
     .stButton>button { background-color: #00FF41; color: #000000; font-weight: bold; border: 1px solid #00FF41;}
     .stButton>button:hover { background-color: #000000; color: #00FF41; box-shadow: 0 0 10px #00FF41; }
     .xml-box { background-color: #111111; padding: 10px; border-left: 3px solid #00FF41; overflow-x: auto; font-family: monospace; color:#FF9900;}
+    .summary-box { border: 2px solid #00FF41; border-radius: 8px; padding: 15px; background-color: #111111; margin-top: 15px; margin-bottom: 15px;}
     </style>
 """, unsafe_allow_html=True)
 
@@ -53,12 +54,26 @@ with tab1:
     
     if up_file and st.button("RUN ALPHA SCAN"):
         if scan_mode == "🏦 Bank Statement":
-            df, res = process_bank_statement(up_file, pdf_pw=file_pw)
+            df, result = process_bank_statement(up_file, pdf_pw=file_pw)
             if df is not None:
                 st.session_state.master_data = df
                 st.session_state.data_type = "BANK"
-                st.success("✅ Bank Data Ready. Go to Tab 2 to map ledgers.")
-            else: st.error(res)
+                st.success("✅ Cleaned Data Ready. Go to Tab 2 to map ledgers.")
+                
+                # 1. DISPLAY DATA GRID FIRST
+                st.dataframe(df, use_container_width=True)
+                
+                # 2. DISPLAY SUMMARY BOX BELOW THE DATA
+                if not up_file.name.endswith('.pdf'):
+                    st.markdown("<div class='summary-box'><h3 style='text-align:center; color:#00FF41; margin-top:0;'>📊 BANK AUDIT SUMMARY</h3>", unsafe_allow_html=True)
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("📌 OPENING BAL", f"₹ {result['op_bal']:,.2f}")
+                    c2.metric(f"🔴 DEBITS ({result['dr_count']})", f"₹ {result['total_dr_amt']:,.2f}")
+                    c3.metric(f"🟢 CREDITS ({result['cr_count']})", f"₹ {result['total_cr_amt']:,.2f}")
+                    c4.metric("🏁 CLOSING BAL", f"₹ {result['cl_bal']:,.2f}")
+                    st.markdown("</div>", unsafe_allow_html=True)
+                    
+            else: st.error(result)
                 
         elif scan_mode == "🧾 GST Bill / Invoice":
             df_main, df_items, status = process_invoice_pdf(up_file, pdf_pw=file_pw)
@@ -67,6 +82,12 @@ with tab1:
                 st.session_state.item_data = df_items
                 st.session_state.data_type = "BILL"
                 st.success("✅ Invoice & Items Extracted. Go to Tab 4 for Tally Push.")
+                
+                st.markdown("#### 📑 INVOICE HEADER")
+                st.dataframe(df_main, use_container_width=True)
+                if not df_items.empty:
+                    st.markdown("#### 📦 INVOICE LINE ITEMS")
+                    st.dataframe(df_items, use_container_width=True)
             else: st.error(status)
 
 # ==========================================
@@ -109,7 +130,6 @@ def generate_bank_xml(df, bank_ledger):
     xml_data = "<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER><BODY><IMPORTDATA><REQUESTDATA><TALLYMESSAGE xmlns:UDF=\"TallyUDF\">"
     
     for idx, row in df.iterrows():
-        # Clean Date for Tally (YYYYMMDD)
         try:
             d_obj = pd.to_datetime(row['Date'])
             tally_date = d_obj.strftime('%Y%m%d')
@@ -144,11 +164,10 @@ def generate_bill_xml(df_main, df_items):
     xml_data = "<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER><BODY><IMPORTDATA><REQUESTDATA><TALLYMESSAGE xmlns:UDF=\"TallyUDF\">"
     
     row = df_main.iloc[0]
-    vch_type = row['Voucher Type'] # Sales or Purchase
+    vch_type = row['Voucher Type']
     party = row['Party Name']
     inv_no = row['Invoice No']
     
-    # Header
     xml_data += f"""
     <VOUCHER VCHTYPE="{vch_type}" ACTION="Create">
         <DATE>20260525</DATE>
@@ -161,7 +180,6 @@ def generate_bill_xml(df_main, df_items):
             <AMOUNT>{'-' + str(row['Total Amount']) if vch_type=="Sales" else str(row['Total Amount'])}</AMOUNT>
         </ALLLEDGERENTRIES.LIST>"""
         
-    # Inventory Line Items
     for idx, item in df_items.iterrows():
         xml_data += f"""
         <ALLINVENTORYENTRIES.LIST>
@@ -183,7 +201,6 @@ with tab4:
         if st.button("🚀 PUSH TO TALLY NOW", type="primary"):
             with st.spinner("Generating Strict Tally XML & Attempting Push..."):
                 try:
-                    # Generate XML payload based on data type
                     if st.session_state.data_type == "BANK":
                         final_xml = generate_bank_xml(st.session_state.master_data, tally_bank_ledger)
                     else:
@@ -191,14 +208,6 @@ with tab4:
                     
                     st.markdown("#### Generated XML Payload Preview")
                     st.markdown(f"<div class='xml-box'>{final_xml[:1000]}... [TRUNCATED]</div>", unsafe_allow_html=True)
-                    
-                    # Uncomment below to actually push to localhost
-                    # response = requests.post(tally_url, data=final_xml, headers={'Content-Type': 'text/xml'})
-                    # if "CREATED" in response.text or "UPDATED" in response.text:
-                    #     st.success("✅ Successfully Injected into Tally!")
-                    # else:
-                    #     st.error(f"Tally rejected the data. Response: {response.text}")
-                    
                     st.success("✅ XML Generated Perfectly. Tally API Push Simulated Successfully!")
                     st.balloons()
                     
