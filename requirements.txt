@@ -1,6 +1,5 @@
-streamlit
-pandas
-supabase
-requests
-pdfplumber
-openpyxl
+streamlit==1.32.0
+pandas==2.2.1
+pdfplumber==0.11.0
+supabase==2.3.6
+openpyxl==3.1.2
