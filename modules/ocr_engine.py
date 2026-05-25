@@ -13,15 +13,21 @@ def process_invoice_pdf(file, pdf_pw=""):
         full_text = ""
         extracted_tables = []
         
-        with pdfplumber.open(file, password=pdf_pw) as pdf:
-            for page in pdf.pages:
-                full_text += page.extract_text() + "\n"
-                tables = page.extract_tables()
-                for t in tables:
-                    if t:
-                        extracted_tables.extend(t)
-        
-        # --- 1. HEADER EXTRACTION FOR TALLY ---
+        # 1. READ FILE (PDF OR EXCEL)
+        if file.name.endswith('.pdf'):
+            with pdfplumber.open(file, password=pdf_pw) as pdf:
+                for page in pdf.pages:
+                    full_text += page.extract_text() + "\n"
+                    tables = page.extract_tables()
+                    for t in tables:
+                        if t: extracted_tables.extend(t)
+        else: # Excel / CSV Bill
+            df_file = pd.read_excel(file) if file.name.endswith('.xlsx') else pd.read_csv(file)
+            full_text = df_file.to_string()
+            # Convert Excel directly to table format
+            extracted_tables = [df_file.columns.tolist()] + df_file.values.tolist()
+
+        # 2. HEADER EXTRACTION FOR TALLY
         gstin_pat = r'\b[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}\b'
         date_pat = r'\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{1,2}-[A-Za-z]{3}-\d{2,4})\b'
         amt_pat = r'(?:Total|Amount|Grand Total|Net Payable)[\s:₹A-Za-z]*([\d,]+\.\d{2})'
@@ -38,26 +44,19 @@ def process_invoice_pdf(file, pdf_pw=""):
         party_name = lines[0] if lines else "🟡 Unknown Party"
         bill_type = classify_invoice(full_text)
         
-        # --- 2. TALLY READY LINE ITEM EXTRACTION ---
+        # 3. TALLY READY LINE ITEM EXTRACTION
         items_list = []
-        
         if extracted_tables:
             for row in extracted_tables:
                 if not row: continue
                 row_str = " ".join(str(cell).lower() for cell in row if cell)
                 
-                # Skip Header rows
                 if 'hsn' in row_str or 'qty' in row_str or 'rate' in row_str:
                     continue
                 
-                # Intelligent Mapping to Tally Columns (Item Name, HSN, Qty, Rate, Amount)
                 clean_row = [str(cell).replace('\n', ' ').strip() if cell else "" for cell in row]
-                
                 item_name = clean_row[0] if len(clean_row) > 0 else "Default Item"
-                hsn = ""
-                qty = "1"
-                rate = "0"
-                amt = "0"
+                hsn, qty, rate, amt = "", "1", "0", "0"
                 
                 for cell in clean_row[1:]:
                     if re.match(r'^\d{4,8}$', cell): hsn = cell
@@ -83,10 +82,9 @@ def process_invoice_pdf(file, pdf_pw=""):
         if items_list:
             df_items = pd.DataFrame(items_list, columns=["Item Name", "HSN", "Qty", "Rate", "Amount"])
         else:
-            # Fallback if table parsing fails perfectly
             df_items = pd.DataFrame([["Misc Item", "9999", "1", amounts[0] if amounts else "0", amounts[0] if amounts else "0"]], columns=["Item Name", "HSN", "Qty", "Rate", "Amount"])
 
         return df_main, df_items, "Success"
         
     except Exception as e:
-        return None, None, f"PDF Extraction Failed: {str(e)}"
+        return None, None, f"File Extraction Failed: {str(e)}"
