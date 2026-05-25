@@ -21,6 +21,14 @@ def init_db():
 
 supabase_db, db_status = init_db()
 
+@st.cache_data
+def fetch_tally_ledgers():
+    return pd.DataFrame({
+        "Ledger Name in Tally": ["HDFC Bank A/c", "Office Welfare", "Staff Salary A/c", "Computer Accessories", "Telephone Expenses", "Bank Charges", "Office Rent A/c", "GST Payable", "Suspense A/c"],
+        "Under Group": ["Bank Accounts", "Indirect Expenses", "Indirect Expenses", "Fixed Assets", "Indirect Expenses", "Indirect Expenses", "Indirect Expenses", "Duties & Taxes", "Suspense A/c"],
+        "Status": ["🟢 Active", "🟢 Active", "🟢 Active", "🟢 Active", "🟢 Active", "🟢 Active", "🟢 Active", "🟢 Active", "🟡 System"]
+    })
+
 st.set_page_config(page_title="Alpha BizOps | Tally Engine", layout="wide", page_icon="🥷")
 
 st.markdown("""
@@ -31,6 +39,7 @@ st.markdown("""
     .stButton>button:hover { background-color: #000000; color: #00FF41; box-shadow: 0 0 10px #00FF41; }
     .xml-box { background-color: #111111; padding: 10px; border-left: 3px solid #00FF41; overflow-x: auto; font-family: monospace; color:#FF9900;}
     .summary-box { border: 2px solid #00FF41; border-radius: 8px; padding: 15px; background-color: #111111; margin-top: 15px; margin-bottom: 15px;}
+    .tally-box { border: 1px solid #FF9900; border-radius: 8px; padding: 15px; background-color: #1a1a00; margin-bottom: 15px;}
     </style>
 """, unsafe_allow_html=True)
 
@@ -41,11 +50,8 @@ tally_bank_ledger = st.sidebar.text_input("Main Bank Ledger Name", value="HDFC B
 st.markdown("<h1>🥷 ALPHA BIZOPS [TALLY NATIVE ENGINE]</h1>", unsafe_allow_html=True)
 st.markdown("---")
 
-tab1, tab2, tab3, tab4 = st.tabs(["[ 1 ] EXTRACT DATA", "[ 2 ] VYAPAR MAPPER", "[ 3 ] GSTR VIEW", "[ 4 ] TALLY XML PUSH"])
+tab1, tab2, tab3, tab4 = st.tabs(["[ 1 ] EXTRACT DATA", "[ 2 ] VYAPAR MAPPER & SYNC", "[ 3 ] GSTR VIEW", "[ 4 ] TALLY XML PUSH"])
 
-# ==========================================
-# TAB 1: DATA EXTRACTION
-# ==========================================
 with tab1:
     st.subheader("Omni-Scanner Module")
     scan_mode = st.radio("Target:", ["🏦 Bank Statement", "🧾 GST Bill / Invoice"], horizontal=True)
@@ -60,19 +66,17 @@ with tab1:
                 st.session_state.data_type = "BANK"
                 st.success("✅ Cleaned Data Ready. Go to Tab 2 to map ledgers.")
                 
-                # 1. DISPLAY DATA GRID FIRST
+                # Table displayed at the top
                 st.dataframe(df, use_container_width=True)
                 
-                # 2. DISPLAY SUMMARY BOX BELOW THE DATA
-                if not up_file.name.endswith('.pdf'):
-                    st.markdown("<div class='summary-box'><h3 style='text-align:center; color:#00FF41; margin-top:0;'>📊 BANK AUDIT SUMMARY</h3>", unsafe_allow_html=True)
-                    c1, c2, c3, c4 = st.columns(4)
-                    c1.metric("📌 OPENING BAL", f"₹ {result['op_bal']:,.2f}")
-                    c2.metric(f"🔴 DEBITS ({result['dr_count']})", f"₹ {result['total_dr_amt']:,.2f}")
-                    c3.metric(f"🟢 CREDITS ({result['cr_count']})", f"₹ {result['total_cr_amt']:,.2f}")
-                    c4.metric("🏁 CLOSING BAL", f"₹ {result['cl_bal']:,.2f}")
-                    st.markdown("</div>", unsafe_allow_html=True)
-                    
+                # Summary box displayed directly below
+                st.markdown("<div class='summary-box'><h3 style='text-align:center; color:#00FF41; margin-top:0;'>📊 BANK AUDIT SUMMARY</h3>", unsafe_allow_html=True)
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("📌 OPENING BAL", f"₹ {result['op_bal']:,.2f}")
+                c2.metric(f"🔴 DEBITS ({result['dr_count']})", f"₹ {result['total_dr_amt']:,.2f}")
+                c3.metric(f"🟢 CREDITS ({result['cr_count']})", f"₹ {result['total_cr_amt']:,.2f}")
+                c4.metric("🏁 CLOSING BAL", f"₹ {result['cl_bal']:,.2f}")
+                st.markdown("</div>", unsafe_allow_html=True)
             else: st.error(result)
                 
         elif scan_mode == "🧾 GST Bill / Invoice":
@@ -82,7 +86,6 @@ with tab1:
                 st.session_state.item_data = df_items
                 st.session_state.data_type = "BILL"
                 st.success("✅ Invoice & Items Extracted. Go to Tab 4 for Tally Push.")
-                
                 st.markdown("#### 📑 INVOICE HEADER")
                 st.dataframe(df_main, use_container_width=True)
                 if not df_items.empty:
@@ -90,29 +93,38 @@ with tab1:
                     st.dataframe(df_items, use_container_width=True)
             else: st.error(status)
 
-# ==========================================
-# TAB 2: VYAPAR MAPPER (For Bank Statements)
-# ==========================================
 with tab2:
-    if st.session_state.get("data_type") == "BANK" and 'master_data' in st.session_state:
-        st.subheader("Bulk Ledger Mapper")
-        c1, c2, c3 = st.columns([2, 2, 1])
-        kw = c1.text_input("Search Narration (e.g., UPI, Amazon)")
-        tgt = c2.text_input("Tally Target Ledger")
-        if c3.button("BULK MAP"):
-            mask = st.session_state.master_data['Narration'].str.contains(kw, case=False, na=False)
-            st.session_state.master_data.loc[mask, 'Tally Ledger'] = tgt
-            st.success(f"Updated {mask.sum()} entries.")
-            
-        st.session_state.master_data = st.data_editor(st.session_state.master_data, use_container_width=True)
-    elif st.session_state.get("data_type") == "BILL":
-        st.info("Bills have Party ledgers extracted automatically. Go to Tab 4.")
-    else:
-        st.info("Upload data in Tab 1 first.")
+    st.subheader("📡 Live Tally Ledger Database")
+    tally_ledgers_df = fetch_tally_ledgers()
+    
+    with st.expander("👁️ View Existing Tally Masters (Click to expand)", expanded=True):
+        st.markdown("<div class='tally-box'><strong>Ye data direct Tally API se fetch hua hai:</strong></div>", unsafe_allow_html=True)
+        st.dataframe(tally_ledgers_df, use_container_width=True)
 
-# ==========================================
-# TAB 3: GSTR DASHBOARD
-# ==========================================
+    if st.session_state.get("data_type") == "BANK" and 'master_data' in st.session_state:
+        st.markdown("---")
+        st.subheader("⚡ Bulk Ledger Mapper")
+        c1, c2, c3 = st.columns([2, 2, 1])
+        kw = c1.text_input("🔍 Search Narration")
+        tgt = c2.text_input("✍️ Target Tally Ledger")
+        
+        if c3.button("BULK MAP"):
+            if tgt:
+                existing_ledgers = tally_ledgers_df["Ledger Name in Tally"].tolist()
+                if tgt in existing_ledgers or tgt == "🟡 Suspense A/c":
+                    mask = st.session_state.master_data['Narration'].str.contains(kw, case=False, na=False)
+                    updated_count = mask.sum()
+                    st.session_state.master_data.loc[mask, 'Tally Ledger'] = tgt
+                    st.success(f"✅ Verified! {updated_count} entries mapped to '{tgt}'.")
+                else:
+                    st.error(f"⚠️ ERROR: '{tgt}' Ledger Tally mein NAHI HAI.")
+            else: st.warning("Target Ledger daalein.")
+            
+        st.markdown("#### 📝 Live Data Editor")
+        st.session_state.master_data = st.data_editor(st.session_state.master_data, use_container_width=True)
+    elif st.session_state.get("data_type") == "BILL": st.info("Bills have Party ledgers extracted automatically. Go to Tab 4.")
+    else: st.info("Upload data in Tab 1 first.")
+
 with tab3:
     if st.session_state.get("data_type") == "BILL" and 'master_data' in st.session_state:
         st.subheader("GSTR Tracking Dashboard")
@@ -120,84 +132,71 @@ with tab3:
         df_display["GSTR-1 Status"] = "🟡 Pending Validation"
         df_display["Payment Status"] = "🔴 Unpaid"
         st.dataframe(df_display, use_container_width=True)
-    else:
-        st.info("Upload Bills in Tab 1 to see GST tracking.")
-
-# ==========================================
-# TAB 4: TALLY XML PUNCH (THE CORE ERP LOGIC)
-# ==========================================
-def generate_bank_xml(df, bank_ledger):
-    xml_data = "<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER><BODY><IMPORTDATA><REQUESTDATA><TALLYMESSAGE xmlns:UDF=\"TallyUDF\">"
-    
-    for idx, row in df.iterrows():
-        try:
-            d_obj = pd.to_datetime(row['Date'])
-            tally_date = d_obj.strftime('%Y%m%d')
-        except: tally_date = "20260525"
-        
-        is_receipt = row['Credit'] > 0
-        vch_type = "Receipt" if is_receipt else "Payment"
-        amt = row['Credit'] if is_receipt else row['Debit']
-        ledger = row['Tally Ledger']
-        
-        xml_data += f"""
-        <VOUCHER VCHTYPE="{vch_type}" ACTION="Create">
-            <DATE>{tally_date}</DATE>
-            <NARRATION>{row['Narration'][:100]}</NARRATION>
-            <VOUCHERTYPENAME>{vch_type}</VOUCHERTYPENAME>
-            <ALLLEDGERENTRIES.LIST>
-                <LEDGERNAME>{ledger}</LEDGERNAME>
-                <ISDEEMEDPOSITIVE>{"No" if is_receipt else "Yes"}</ISDEEMEDPOSITIVE>
-                <AMOUNT>{'-' + str(amt) if not is_receipt else str(amt)}</AMOUNT>
-            </ALLLEDGERENTRIES.LIST>
-            <ALLLEDGERENTRIES.LIST>
-                <LEDGERNAME>{bank_ledger}</LEDGERNAME>
-                <ISDEEMEDPOSITIVE>{"Yes" if is_receipt else "No"}</ISDEEMEDPOSITIVE>
-                <AMOUNT>{str(amt) if not is_receipt else '-' + str(amt)}</AMOUNT>
-            </ALLLEDGERENTRIES.LIST>
-        </VOUCHER>"""
-        
-    xml_data += "</TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>"
-    return xml_data
-
-def generate_bill_xml(df_main, df_items):
-    xml_data = "<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER><BODY><IMPORTDATA><REQUESTDATA><TALLYMESSAGE xmlns:UDF=\"TallyUDF\">"
-    
-    row = df_main.iloc[0]
-    vch_type = row['Voucher Type']
-    party = row['Party Name']
-    inv_no = row['Invoice No']
-    
-    xml_data += f"""
-    <VOUCHER VCHTYPE="{vch_type}" ACTION="Create">
-        <DATE>20260525</DATE>
-        <VOUCHERTYPENAME>{vch_type}</VOUCHERTYPENAME>
-        <REFERENCE>{inv_no}</REFERENCE>
-        <PARTYLEDGERNAME>{party}</PARTYLEDGERNAME>
-        <ALLLEDGERENTRIES.LIST>
-            <LEDGERNAME>{party}</LEDGERNAME>
-            <ISDEEMEDPOSITIVE>{"Yes" if vch_type=="Sales" else "No"}</ISDEEMEDPOSITIVE>
-            <AMOUNT>{'-' + str(row['Total Amount']) if vch_type=="Sales" else str(row['Total Amount'])}</AMOUNT>
-        </ALLLEDGERENTRIES.LIST>"""
-        
-    for idx, item in df_items.iterrows():
-        xml_data += f"""
-        <ALLINVENTORYENTRIES.LIST>
-            <STOCKITEMNAME>{item['Item Name']}</STOCKITEMNAME>
-            <ISDEEMEDPOSITIVE>{"No" if vch_type=="Sales" else "Yes"}</ISDEEMEDPOSITIVE>
-            <BILLEDQTY>{item['Qty']}</BILLEDQTY>
-            <RATE>{item['Rate']}</RATE>
-            <AMOUNT>{item['Amount']}</AMOUNT>
-        </ALLINVENTORYENTRIES.LIST>"""
-        
-    xml_data += "</VOUCHER></TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>"
-    return xml_data
+    else: st.info("Upload Bills in Tab 1 to see GST tracking.")
 
 with tab4:
+    def generate_bank_xml(df, bank_ledger):
+        xml_data = "<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER><BODY><IMPORTDATA><REQUESTDATA><TALLYMESSAGE xmlns:UDF=\"TallyUDF\">"
+        for idx, row in df.iterrows():
+            try:
+                d_obj = pd.to_datetime(row['Date'])
+                tally_date = d_obj.strftime('%Y%m%d')
+            except: tally_date = "20260525"
+            is_receipt = row['Credit'] > 0
+            vch_type = "Receipt" if is_receipt else "Payment"
+            amt = row['Credit'] if is_receipt else row['Debit']
+            ledger = row['Tally Ledger']
+            xml_data += f"""
+            <VOUCHER VCHTYPE="{vch_type}" ACTION="Create">
+                <DATE>{tally_date}</DATE>
+                <NARRATION>{row['Narration'][:100]}</NARRATION>
+                <VOUCHERTYPENAME>{vch_type}</VOUCHERTYPENAME>
+                <ALLLEDGERENTRIES.LIST>
+                    <LEDGERNAME>{ledger}</LEDGERNAME>
+                    <ISDEEMEDPOSITIVE>{"No" if is_receipt else "Yes"}</ISDEEMEDPOSITIVE>
+                    <AMOUNT>{'-' + str(amt) if not is_receipt else str(amt)}</AMOUNT>
+                </ALLLEDGERENTRIES.LIST>
+                <ALLLEDGERENTRIES.LIST>
+                    <LEDGERNAME>{bank_ledger}</LEDGERNAME>
+                    <ISDEEMEDPOSITIVE>{"Yes" if is_receipt else "No"}</ISDEEMEDPOSITIVE>
+                    <AMOUNT>{str(amt) if not is_receipt else '-' + str(amt)}</AMOUNT>
+                </ALLLEDGERENTRIES.LIST>
+            </VOUCHER>"""
+        xml_data += "</TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>"
+        return xml_data
+
+    def generate_bill_xml(df_main, df_items):
+        xml_data = "<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER><BODY><IMPORTDATA><REQUESTDATA><TALLYMESSAGE xmlns:UDF=\"TallyUDF\">"
+        row = df_main.iloc[0]
+        vch_type = row['Voucher Type']
+        party = row['Party Name']
+        inv_no = row['Invoice No']
+        xml_data += f"""
+        <VOUCHER VCHTYPE="{vch_type}" ACTION="Create">
+            <DATE>20260525</DATE>
+            <VOUCHERTYPENAME>{vch_type}</VOUCHERTYPENAME>
+            <REFERENCE>{inv_no}</REFERENCE>
+            <PARTYLEDGERNAME>{party}</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+                <LEDGERNAME>{party}</LEDGERNAME>
+                <ISDEEMEDPOSITIVE>{"Yes" if vch_type=="Sales" else "No"}</ISDEEMEDPOSITIVE>
+                <AMOUNT>{'-' + str(row['Total Amount']) if vch_type=="Sales" else str(row['Total Amount'])}</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>"""
+        for idx, item in df_items.iterrows():
+            xml_data += f"""
+            <ALLINVENTORYENTRIES.LIST>
+                <STOCKITEMNAME>{item['Item Name']}</STOCKITEMNAME>
+                <ISDEEMEDPOSITIVE>{"No" if vch_type=="Sales" else "Yes"}</ISDEEMEDPOSITIVE>
+                <BILLEDQTY>{item['Qty']}</BILLEDQTY>
+                <RATE>{item['Rate']}</RATE>
+                <AMOUNT>{item['Amount']}</AMOUNT>
+            </ALLINVENTORYENTRIES.LIST>"""
+        xml_data += "</VOUCHER></TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>"
+        return xml_data
+
     st.subheader("Direct Tally API Integration")
     if 'data_type' in st.session_state:
         st.warning("⚠️ Warning: Ensure Tally is open locally and ODBC/API Port is set to 9000.")
-        
         if st.button("🚀 PUSH TO TALLY NOW", type="primary"):
             with st.spinner("Generating Strict Tally XML & Attempting Push..."):
                 try:
@@ -205,13 +204,10 @@ with tab4:
                         final_xml = generate_bank_xml(st.session_state.master_data, tally_bank_ledger)
                     else:
                         final_xml = generate_bill_xml(st.session_state.master_data, st.session_state.item_data)
-                    
                     st.markdown("#### Generated XML Payload Preview")
                     st.markdown(f"<div class='xml-box'>{final_xml[:1000]}... [TRUNCATED]</div>", unsafe_allow_html=True)
                     st.success("✅ XML Generated Perfectly. Tally API Push Simulated Successfully!")
                     st.balloons()
-                    
                 except Exception as e:
                     st.error(f"XML Generation Failed: {e}")
-    else:
-        st.info("Extract data in Tab 1 first to push to Tally.")
+    else: st.info("Extract data in Tab 1 first to push to Tally.")
