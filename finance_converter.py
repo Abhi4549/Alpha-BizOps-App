@@ -167,12 +167,12 @@ if uploaded_file:
             if raw_data:
                 df = pd.DataFrame(raw_data)
                 
-                # Tally format ke liye extra calculations (Amount, Balance) hide karna
-                df_tally_ready = df.drop(columns=['Amount', 'Balance'])
+                # Sirf temporary 'Amount' column hata rahe hain. Balance ab Debit/Credit ke sath show hoga.
+                df_tally_ready = df[['Date', 'Narration', 'Debit', 'Credit', 'Balance']]
                 
                 st.success("✅ Extraction 100% Accurate & Reconciled!")
                 
-                # --- METRICS DASHBOARD (UPDATED WITH TOTAL AMOUNTS) ---
+                # --- METRICS DASHBOARD (WITH TOTAL AMOUNTS) ---
                 st.markdown("### 📊 Statement Summary")
                 m1, m2, m3, m4 = st.columns(4)
                 m1.markdown(f'<div class="metric-card"><b>Opening Bal</b><br>₹ {meta["opening_bal"]:,.2f}</div>', unsafe_allow_html=True)
@@ -182,18 +182,18 @@ if uploaded_file:
                 
                 st.write("<br>", unsafe_allow_html=True)
                 
-                # --- DATA PREVIEW (TALLY READY) ---
-                st.write("### 📝 Tally-Ready Data Preview")
-                st.dataframe(df_tally_ready, use_container_width=True) # Yahan ab clean Tally data show hoga (Bina Balance ke)
+                # --- DATA PREVIEW (TALLY READY WITH BALANCE) ---
+                st.write("### 📝 Data Preview (Ready for Excel/Tally)")
+                st.dataframe(df_tally_ready, use_container_width=True) 
                 
                 # --- EXPORT BUTTONS ---
-                st.write("### 📥 Download for Tally Import")
+                st.write("### 📥 Download Extracted Data")
                 c1, c2 = st.columns(2)
                 
                 csv_data = df_tally_ready.to_csv(index=False).encode('utf-8')
-                c1.download_button("Download Tally-Ready CSV", csv_data, "alpha_tally.csv", "text/csv", use_container_width=True)
+                c1.download_button("Download CSV", csv_data, "alpha_tally.csv", "text/csv", use_container_width=True)
                 
                 excel_data = to_excel(df_tally_ready)
-                c2.download_button("Download Tally-Ready Excel (.xlsx)", excel_data, "alpha_tally.xlsx", use_container_width=True)
+                c2.download_button("Download Excel (.xlsx)", excel_data, "alpha_tally.xlsx", use_container_width=True)
             else:
                 st.error(f"❌ Error: {status}")
