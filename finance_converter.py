@@ -25,7 +25,14 @@ st.markdown('<div class="hero-subtitle">100% Accurate Data Extraction with Auto-
 # ==========================================
 def process_mathematical_parser(file, password=""):
     raw_transactions = []
-    meta = {"opening_bal": 0.0, "closing_bal": 0.0, "debit_count": 0, "credit_count": 0}
+    meta = {
+        "opening_bal": 0.0, 
+        "closing_bal": 0.0, 
+        "debit_count": 0, 
+        "credit_count": 0,
+        "total_debit_amt": 0.0,
+        "total_credit_amt": 0.0
+    }
     
     try:
         with pdfplumber.open(file, password=password) as pdf:
@@ -114,11 +121,15 @@ def process_mathematical_parser(file, password=""):
                 else:
                     curr["Credit"] = amt 
                     
-        # --- METRICS CALCULATION ---
+        # --- METRICS CALCULATION (With Amounts) ---
         if raw_transactions:
             for txn in raw_transactions:
-                if txn["Debit"] > 0: meta["debit_count"] += 1
-                if txn["Credit"] > 0: meta["credit_count"] += 1
+                if txn["Debit"] > 0: 
+                    meta["debit_count"] += 1
+                    meta["total_debit_amt"] += txn["Debit"]
+                if txn["Credit"] > 0: 
+                    meta["credit_count"] += 1
+                    meta["total_credit_amt"] += txn["Credit"]
                 
             # Closing Balance is simply the last transaction's balance
             meta["closing_bal"] = raw_transactions[-1]["Balance"]
@@ -161,19 +172,19 @@ if uploaded_file:
                 
                 st.success("✅ Extraction 100% Accurate & Reconciled!")
                 
-                # --- METRICS DASHBOARD ---
+                # --- METRICS DASHBOARD (UPDATED WITH TOTAL AMOUNTS) ---
                 st.markdown("### 📊 Statement Summary")
                 m1, m2, m3, m4 = st.columns(4)
                 m1.markdown(f'<div class="metric-card"><b>Opening Bal</b><br>₹ {meta["opening_bal"]:,.2f}</div>', unsafe_allow_html=True)
-                m2.markdown(f'<div class="metric-card"><b>Closing Bal</b><br>₹ {meta["closing_bal"]:,.2f}</div>', unsafe_allow_html=True)
-                m3.markdown(f'<div class="metric-card"><b>Total Debits</b><br>{meta["debit_count"]} Txns</div>', unsafe_allow_html=True)
-                m4.markdown(f'<div class="metric-card"><b>Total Credits</b><br>{meta["credit_count"]} Txns</div>', unsafe_allow_html=True)
+                m2.markdown(f'<div class="metric-card"><b>Total Debits (-)</b><br>₹ {meta["total_debit_amt"]:,.2f}<br><span style="font-size:13px; color:#6B7280;">({meta["debit_count"]} Txns)</span></div>', unsafe_allow_html=True)
+                m3.markdown(f'<div class="metric-card"><b>Total Credits (+)</b><br>₹ {meta["total_credit_amt"]:,.2f}<br><span style="font-size:13px; color:#6B7280;">({meta["credit_count"]} Txns)</span></div>', unsafe_allow_html=True)
+                m4.markdown(f'<div class="metric-card"><b>Closing Bal</b><br>₹ {meta["closing_bal"]:,.2f}</div>', unsafe_allow_html=True)
                 
                 st.write("<br>", unsafe_allow_html=True)
                 
                 # --- DATA PREVIEW (TALLY READY) ---
                 st.write("### 📝 Tally-Ready Data Preview")
-                st.dataframe(df_tally_ready, use_container_width=True) # Yahan ab clean Tally data show hoga
+                st.dataframe(df_tally_ready, use_container_width=True) # Yahan ab clean Tally data show hoga (Bina Balance ke)
                 
                 # --- EXPORT BUTTONS ---
                 st.write("### 📥 Download for Tally Import")
