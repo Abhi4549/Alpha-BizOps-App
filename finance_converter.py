@@ -1,103 +1,57 @@
+# File: main_app.py
 import streamlit as st
 import pandas as pd
-import pdfplumber
-import io
-import re
+from modules.bank_engine import process_tally_standard, to_excel
 
-# ==========================================
-# 1. FRONTEND: SAAS UI CONFIGURATION
-# ==========================================
-st.set_page_config(page_title="Alpha Finance Converter", page_icon="⚙️", layout="wide")
+# --- UI Setup ---
+st.set_page_config(page_title="Alpha BizOps Hub", page_icon="🥷", layout="wide")
 
 st.markdown("""
     <style>
     .hero-title { font-size: 40px; font-weight: 800; color: #1E3A8A; text-align: center; margin-bottom: 5px;}
-    .hero-subtitle { font-size: 16px; color: #4B5563; text-align: center; margin-bottom: 30px;}
     .metric-card { background-color: #F3F4F6; padding: 15px; border-radius: 8px; text-align: center; border: 1px solid #E5E7EB; }
     </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="hero-title">Alpha Finance Converter (Tally Pro)</div>', unsafe_allow_html=True)
-st.markdown('<div class="hero-subtitle">Deep Cleaned CSV/Excel engine optimized strictly for Tally Import</div>', unsafe_allow_html=True)
+st.markdown('<div class="hero-title">🥷 Alpha BizOps Hub</div>', unsafe_allow_html=True)
 
-# ==========================================
-# 2. BACKEND: PRO DEEP CLEANING ENGINE 
-# ==========================================
-def clean_amount(val):
-    """Numbers se comma aur text hata kar pure float mein badalna"""
-    if not val: return 0.0
-    val = str(val).replace(',', '').replace('Cr', '').replace('Dr', '').replace('cr', '').replace('dr', '').strip()
-    try:
-        return float(val)
-    except:
-        return 0.0
+# --- Scalable Navigation Menu ---
+# Yahan aage chalkar hum "Purchase Bill OCR", "GSTR Reconciliation" add karenge
+menu = st.sidebar.radio("Select Tool", ["🏦 Bank Statement Cleaner", "🧾 Future Tools (Coming Soon)"])
 
-def process_tally_standard(file, password=""):
-    extracted_data = []
-    meta = {"opening_bal": 0.0, "closing_bal": 0.0, "debit_count": 0, "credit_count": 0}
+if menu == "🏦 Bank Statement Cleaner":
+    st.subheader("Deep Cleaned Engine for Tally")
     
-    try:
-        with pdfplumber.open(file, password=password) as pdf:
-            # Smart Date Pattern (DD/MM/YYYY, DD-MM-YYYY, DD-MMM-YYYY)
-            date_pattern = re.compile(r'^\d{1,2}[/\-\s]([a-zA-Z]{3}|\d{1,2})[/\-\s]\d{2,4}')
-            
-            for page in pdf.pages:
-                # Advanced Snap Tolerance for invisible grids
-                tables = page.extract_tables(table_settings={
-                    "vertical_strategy": "text",
-                    "horizontal_strategy": "text",
-                    "intersection_tolerance": 15,
-                    "snap_tolerance": 5,
-                })
+    uploaded_file = st.file_uploader("Upload Bank Statement (PDF)", type=['pdf'])
+    
+    if uploaded_file:
+        col1, col2 = st.columns(2)
+        pdf_password = col1.text_input("PDF Password (if any)", type="password")
+        
+        if st.button("🚀 Process Data", use_container_width=True):
+            with st.spinner("Extracting with Alpha Logic..."):
+                # Backend module ko call kiya gaya hai
+                raw_data, meta, status = process_tally_standard(uploaded_file, pdf_password)
                 
-                for table in tables:
-                    temp_row = None  # Buffer for merging multi-line narration
+                if raw_data:
+                    df = pd.DataFrame(raw_data)
+                    st.success("✅ Extraction Completed!")
                     
-                    for row in table:
-                        cleaned_row = [str(cell).replace('\n', ' ').strip() if cell else "" for cell in row]
-                        # Remove completely blank items to fix column shifts
-                        compact_row = [cell for cell in cleaned_row if cell != ""]
-                        
-                        if not compact_row: continue
-                        row_text = " ".join(compact_row).lower()
-                        
-                        # --- Opening / Closing Balance Extractor ---
-                        if "opening balance" in row_text or "b/f" in row_text:
-                            nums = re.findall(r'[\d,]+\.\d{2}', row_text)
-                            if nums: meta["opening_bal"] = clean_amount(nums[-1])
-                        if "closing balance" in row_text or "c/f" in row_text:
-                            nums = re.findall(r'[\d,]+\.\d{2}', row_text)
-                            if nums: meta["closing_bal"] = clean_amount(nums[-1])
+                    st.markdown("### 📊 Summary")
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.markdown(f'<div class="metric-card"><b>Opening Bal</b><br>₹ {meta["opening_bal"]:,.2f}</div>', unsafe_allow_html=True)
+                    m2.markdown(f'<div class="metric-card"><b>Closing Bal</b><br>₹ {meta["closing_bal"]:,.2f}</div>', unsafe_allow_html=True)
+                    m3.markdown(f'<div class="metric-card"><b>Debits</b><br>{meta["debit_count"]} Txns</div>', unsafe_allow_html=True)
+                    m4.markdown(f'<div class="metric-card"><b>Credits</b><br>{meta["credit_count"]} Txns</div>', unsafe_allow_html=True)
+                    
+                    st.write("### 📝 Preview")
+                    st.dataframe(df, use_container_width=True)
+                    
+                    c1, c2 = st.columns(2)
+                    c1.download_button("Download CSV", df.to_csv(index=False).encode('utf-8'), "tally_ready.csv", "text/csv", use_container_width=True)
+                    c2.download_button("Download Excel", to_excel(df), "tally_ready.xlsx", use_container_width=True)
+                else:
+                    st.error(f"❌ Error: {status}")
 
-                        # --- Transaction Extractor ---
-                        if date_pattern.search(compact_row[0]):
-                            # Agar pichli entry complete ho gayi thi, toh usko save karo
-                            if temp_row:
-                                extracted_data.append(temp_row)
-                            
-                            date = compact_row[0]
-                            narration = compact_row[1] if len(compact_row) > 1 else ""
-                            
-                            # Piche se amounts nikalna (Debit, Credit, Balance)
-                            amounts = [clean_amount(x) for x in compact_row[2:] if re.match(r'^-?[\d,]+(\.\d{1,2})?$', str(x).replace(',',''))]
-                            
-                            debit, credit, balance = 0.0, 0.0, 0.0
-                            
-                            if len(amounts) >= 3:
-                                debit, credit, balance = amounts[-3], amounts[-2], amounts[-1]
-                            elif len(amounts) == 2:
-                                debit, credit = amounts[0], amounts[1]
-                            elif len(amounts) == 1:
-                                val = amounts[0]
-                                if "cr" in row_text: credit = val
-                                else: debit = val
-                                
-                            temp_row = {
-                                "Date": date,
-                                "Narration": narration,
-                                "Debit": debit,
-                                "Credit": credit,
-                                "Balance": balance
-                            }
-                            
-                            if debit > 0:
+elif menu == "🧾 Future Tools (Coming Soon)":
+    st.info("Yahan hum aage Invoice OCR Scanner aur API modules add karenge. Backend bilkul safe rahega!")
