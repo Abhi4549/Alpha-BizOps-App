@@ -1,54 +1,36 @@
 import streamlit as st
-from datetime import datetime
-from logic.models import Party, Voucher
-from logic.accounting import AccountingEngine
-from logic.db_manager import init_db, save_invoice, get_all_invoices
-from logic.engine import create_tally_voucher_xml
+import pandas as pd
+from logic.parser import extract_data
 
-# 1. App Configuration
-st.set_page_config(page_title="Alpha Vyapar Pro", layout="wide")
-init_db() # Database start
+st.set_page_config(layout="wide", page_title="Bank-to-Tally Pro")
+st.title("🥷 ALPHA BIZOPS [TALLY SYNC ENGINE]")
 
-st.title("🥷 ALPHA VYAPAR PRO | ENTERPRISE ERP")
+# Tab System
+tab1, tab2 = st.tabs(["[1] PDF/Excel Upload", "[2] Tally Mapping"])
 
-# 2. Sidebar Navigation
-menu = st.sidebar.radio("Navigation", ["Dashboard", "Sales Invoice", "Ledger Sync", "Tally XML"])
+with tab1:
+    uploaded_file = st.file_uploader("Upload Bank Statement")
+    pdf_pw = st.text_input("Password (if any)", type="password")
+    
+    if uploaded_file and st.button("Extract"):
+        df = extract_data(uploaded_file, pdf_pw)
+        st.session_state.data = df
+        st.dataframe(df)
 
-# 3. DASHBOARD PANEL
-if menu == "Dashboard":
-    st.subheader("Financial Overview")
-    invoices = get_all_invoices()
-    total_sales = sum([inv[2] for inv in invoices])
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Total Sales", f"₹ {total_sales:,.2f}")
-    c2.metric("Total Invoices", len(invoices))
-    st.dataframe(invoices, use_container_width=True)
-
-# 4. SALES INVOICE PANEL
-elif menu == "Sales Invoice":
-    st.subheader("GST Sales Invoice Generator")
-    with st.form("invoice_form"):
-        col1, col2 = st.columns(2)
-        party_name = col1.text_input("Party Name")
-        amt = col2.number_input("Taxable Amount", min_value=0.0)
-        gst = st.slider("GST Rate (%)", 0, 28, 18)
+with tab2:
+    if 'data' in st.session_state:
+        st.subheader("Map Columns to Tally")
+        # Column Selector
+        cols = st.session_state.data.columns
+        date_map = st.selectbox("Select Date Column", cols)
+        narr_map = st.selectbox("Select Narration Column", cols)
+        amt_map = st.selectbox("Select Amount Column", cols)
         
-        if st.form_submit_button("Save & Generate"):
-            # Calculate Tax
-            cgst, sgst, tax = AccountingEngine.calculate_tax(amt, gst)
-            # Save to DB
-            save_invoice(party_name, amt + tax, gst, str(datetime.now().date()))
-            st.success(f"Invoice Saved! Total: ₹{amt + tax:,.2f}")
-
-# 5. TALLY XML GENERATOR
-elif menu == "Tally XML":
-    st.subheader("Generate Tally Import XML")
-    if st.button("Export All Data"):
-        invoices = get_all_invoices()
-        xml_output = "<ENVELOPE><TALLYMESSAGE>"
-        for inv in invoices:
-            # Fake mapping for demo
-            xml_output += f"<VOUCHER><PARTY>{inv[1]}</PARTY><AMOUNT>{inv[2]}</AMOUNT></VOUCHER>"
-        xml_output += "</TALLYMESSAGE></ENVELOPE>"
-        st.code(xml_output, language="xml")
-        st.download_button("Download XML", xml_output, "tally_import.xml")
+        if st.button("Generate Tally XML"):
+            # XML Generator Logic
+            xml = "<ENVELOPE><TALLYMESSAGE>"
+            for _, r in st.session_state.data.iterrows():
+                xml += f"<VOUCHER><DATE>{r[date_map]}</DATE><NARRATION>{r[narr_map]}</NARRATION><AMOUNT>{r[amt_map]}</AMOUNT></VOUCHER>"
+            xml += "</TALLYMESSAGE></ENVELOPE>"
+            st.code(xml, language="xml")
+            st.download_button("Download XML", xml, "tally_import.xml")
