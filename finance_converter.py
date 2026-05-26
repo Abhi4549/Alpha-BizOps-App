@@ -5,9 +5,9 @@ import io
 import re
 
 # ==========================================
-# 1. FRONTEND: ALPHA BIZOPS UI
+# 1. FRONTEND: UI CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Alpha BizOps Hub", page_icon="🥷", layout="wide")
+st.set_page_config(page_title="BANK PDF TO TALLY EXCEL", page_icon="🏦", layout="wide")
 
 st.markdown("""
     <style>
@@ -17,11 +17,11 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="hero-title">🥷 Alpha BizOps Hub [MATH ENGINE]</div>', unsafe_allow_html=True)
+st.markdown('<div class="hero-title">🏦 BANK PDF TO TALLY EXCEL</div>', unsafe_allow_html=True)
 st.markdown('<div class="hero-subtitle">100% Accurate Data Extraction with Auto-Reconciliation & Dashboard</div>', unsafe_allow_html=True)
 
 # ==========================================
-# 2. BACKEND: THE 100% ACCURATE MATH PARSER
+# 2. BACKEND: 100% ACCURATE MATH PARSER
 # ==========================================
 def process_mathematical_parser(file, password=""):
     raw_transactions = []
@@ -100,71 +100,4 @@ def process_mathematical_parser(file, password=""):
                 prev_bal = raw_transactions[i-1]["Balance"]
                 curr_bal = curr["Balance"]
                 
-                if round(prev_bal + amt, 2) == round(curr_bal, 2):
-                    curr["Credit"] = amt
-                elif round(prev_bal - amt, 2) == round(curr_bal, 2):
-                    curr["Debit"] = amt
-                else:
-                    diff = round(curr_bal - prev_bal, 2)
-                    if diff > 0: curr["Credit"] = amt
-                    elif diff < 0: curr["Debit"] = amt
-            else:
-                if "RTGS" in curr["Narration"].upper() or "NEFT" in curr["Narration"].upper():
-                    curr["Debit"] = amt 
-                else:
-                    curr["Credit"] = amt 
-                    
-        # --- METRICS CALCULATION ---
-        if raw_transactions:
-            for txn in raw_transactions:
-                if txn["Debit"] > 0: meta["debit_count"] += 1
-                if txn["Credit"] > 0: meta["credit_count"] += 1
-                
-            # Closing Balance is simply the last transaction's balance
-            meta["closing_bal"] = raw_transactions[-1]["Balance"]
-            
-            # Opening Balance via Reverse Math on first transaction
-            # Opening = Current Balance - Credit + Debit
-            first_txn = raw_transactions[0]
-            meta["opening_bal"] = first_txn["Balance"] - first_txn["Credit"] + first_txn["Debit"]
-
-        return raw_transactions, meta, "Success"
-        
-    except Exception as e:
-        return None, None, str(e)
-
-def to_excel(df):
-    output = io.BytesIO()
-    df_tally = df.drop(columns=['Amount', 'Balance'])
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df_tally.to_excel(writer, index=False, sheet_name='TallyData')
-    return output.getvalue()
-
-# ==========================================
-# 3. DASHBOARD EXECUTION
-# ==========================================
-st.sidebar.title("System Engine")
-st.sidebar.success("✅ Math Engine Active")
-
-uploaded_file = st.file_uploader("Upload Bank Statement (PDF)", type=['pdf'])
-
-if uploaded_file:
-    pdf_password = st.text_input("PDF Password (if any)", type="password")
-    
-    if st.button("🚀 Process & Generate Tally Data", use_container_width=True):
-        with st.spinner("Reconciling logic applied... please wait"):
-            raw_data, meta, status = process_mathematical_parser(uploaded_file, pdf_password)
-            
-            if raw_data:
-                df = pd.DataFrame(raw_data)
-                st.success("✅ Extraction 100% Accurate & Reconciled!")
-                
-                # --- METRICS DASHBOARD ---
-                st.markdown("### 📊 Statement Summary")
-                m1, m2, m3, m4 = st.columns(4)
-                m1.markdown(f'<div class="metric-card"><b>Opening Bal</b><br>₹ {meta["opening_bal"]:,.2f}</div>', unsafe_allow_html=True)
-                m2.markdown(f'<div class="metric-card"><b>Closing Bal</b><br>₹ {meta["closing_bal"]:,.2f}</div>', unsafe_allow_html=True)
-                m3.markdown(f'<div class="metric-card"><b>Total Debits</b><br>{meta["debit_count"]} Txns</div>', unsafe_allow_html=True)
-                m4.markdown(f'<div class="metric-card"><b>Total Credits</b><br>{meta["credit_count"]} Txns</div>', unsafe_allow_html=True)
-                
-                st.write("<br>", unsafe_allow_html=True)
+                if round(prev_bal + amt, 2) == round(curr_bal,
