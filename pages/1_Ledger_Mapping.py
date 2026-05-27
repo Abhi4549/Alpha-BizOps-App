@@ -4,9 +4,6 @@ import requests
 import xml.etree.ElementTree as ET
 import io
 
-# ==========================================
-# 1. UI CONFIGURATION
-# ==========================================
 st.set_page_config(page_title="Alpha Ledger Mapper", page_icon="🔗", layout="wide")
 
 st.markdown("""
@@ -19,9 +16,6 @@ st.markdown("""
 st.markdown('<div class="hero-title">🔗 Alpha Ledger Mapping Engine</div>', unsafe_allow_html=True)
 st.markdown('<div class="hero-subtitle">Map Cleaned Data to Tally Ledgers | Auto-Suspense Allocation</div>', unsafe_allow_html=True)
 
-# ==========================================
-# 2. TALLY LIVE FETCH LOGIC (PORT 9000)
-# ==========================================
 @st.cache_data(ttl=300) 
 def fetch_tally_ledgers():
     tally_url = "http://localhost:9000"
@@ -37,29 +31,39 @@ def fetch_tally_ledgers():
     except:
         return ["Suspense A/c", "Sales", "Purchase", "Bank A/c", "Cash", "Rahul Sharma", "Alpha Services"]
 
-# ==========================================
-# 3. MAPPING ENGINE UI
-# ==========================================
 st.sidebar.title("⚙️ Tally Connection")
 tally_status = st.sidebar.empty()
-
 tally_ledgers = fetch_tally_ledgers()
+
 if len(tally_ledgers) > 10: tally_status.success("🟢 Tally Connected (Live Ledgers)")
 else: tally_status.warning("🟡 Using Offline Draft Ledgers")
 
-st.write("---")
-uploaded_file = st.file_uploader("Upload Cleaned Excel/CSV (Extracted from Bank Engine)", type=['csv', 'xlsx'])
+df_map = None
 
-if uploaded_file:
-    if uploaded_file.name.endswith('.csv'): df = pd.read_csv(uploaded_file)
-    else: df = pd.read_excel(uploaded_file)
-        
+# --- BRIDGE RECEIVER: Check if data came from the Main Page ---
+if 'cleaned_data' in st.session_state and st.session_state['cleaned_data'] is not None:
+    st.success("🔗 Live Data Synced from Bank Extraction Tool!")
+    df_map = st.session_state['cleaned_data'].copy()
+    
+    if st.button("🗑️ Clear Synced Data & Upload Manually"):
+        st.session_state['cleaned_data'] = None
+        st.rerun()
+else:
+    st.info("Upload a file OR extract data from the main page to auto-sync here.")
+    uploaded_file = st.file_uploader("Upload Cleaned Excel/CSV", type=['csv', 'xlsx'])
+    if uploaded_file:
+        if uploaded_file.name.endswith('.csv'): df_map = pd.read_csv(uploaded_file)
+        else: df_map = pd.read_excel(uploaded_file)
+
+# --- PROCESS DATA ---
+if df_map is not None:
+    st.write("---")
     st.info("💡 Engine automatically assigned unknown entries to 'Suspense A/c'. You can change them in the table below.")
     
-    if 'Narration' not in df.columns:
-        st.error("❌ Uploaded file mein 'Narration' column nahi hai. Kripya Bank Engine se nikli hui file upload karein.")
+    if 'Narration' not in df_map.columns:
+        st.error("❌ Uploaded file mein 'Narration' column nahi hai.")
     else:
-        if 'Mapped_Ledger' not in df.columns:
+        if 'Mapped_Ledger' not in df_map.columns:
             def auto_map(narration):
                 narr_lower = str(narration).lower()
                 if 'cash' in narr_lower: return 'Cash'
@@ -67,13 +71,12 @@ if uploaded_file:
                     return 'Suspense A/c' 
                 return 'Suspense A/c'
                 
-            df['Mapped_Ledger'] = df['Narration'].apply(auto_map)
-            df['Action_Required'] = df['Mapped_Ledger'].apply(lambda x: "⚠️ Review" if x == "Suspense A/c" else "✅ Ready")
+            df_map['Mapped_Ledger'] = df_map['Narration'].apply(auto_map)
+            df_map['Action_Required'] = df_map['Mapped_Ledger'].apply(lambda x: "⚠️ Review" if x == "Suspense A/c" else "✅ Ready")
 
         display_cols = ['Action_Required', 'Date', 'Narration', 'Debit', 'Credit', 'Mapped_Ledger']
-        df_display = df[[c for c in display_cols if c in df.columns]]
+        df_display = df_map[[c for c in display_cols if c in df_map.columns]]
         
-        # INTERACTIVE DATA EDITOR
         edited_df = st.data_editor(
             df_display,
             column_config={
@@ -86,7 +89,6 @@ if uploaded_file:
         
         st.write("---")
         c1, c2 = st.columns(2)
-        
         with c1:
             st.subheader("📊 Mapping Status")
             suspense_count = len(edited_df[edited_df['Mapped_Ledger'] == 'Suspense A/c'])
