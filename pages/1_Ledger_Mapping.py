@@ -14,7 +14,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="hero-title">🔗 Alpha Ledger Mapping Engine</div>', unsafe_allow_html=True)
-st.markdown('<div class="hero-subtitle">Map Cleaned Data to Tally Ledgers | Auto-Suspense Allocation</div>', unsafe_allow_html=True)
+st.markdown('<div class="hero-subtitle">Map Cleaned Data to Tally Ledgers | Auto-Suspense Allocation & Bulk Mapping</div>', unsafe_allow_html=True)
 
 @st.cache_data(ttl=300) 
 def fetch_tally_ledgers():
@@ -29,7 +29,13 @@ def fetch_tally_ledgers():
             return sorted(ledgers)
         else: return ["Suspense A/c", "Sales", "Purchase", "Bank A/c", "Cash"]
     except:
-        return ["Suspense A/c", "Sales", "Purchase", "Bank A/c", "Cash", "Rahul Sharma", "Alpha Services"]
+        return ["Suspense A/c", "Sales", "Purchase", "Bank A/c", "Cash", "Rahul Sharma", "Alpha Services", "Swiggy/Zomato", "UPI Expenses"]
+
+def to_excel(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='TallyData')
+    return output.getvalue()
 
 st.sidebar.title("⚙️ Tally Connection")
 tally_status = st.sidebar.empty()
@@ -40,9 +46,9 @@ else: tally_status.warning("🟡 Using Offline Draft Ledgers")
 
 df_map = None
 
-# --- BRIDGE RECEIVER: Check if data came from the Main Page ---
+# --- RECEIVER: Checking memory from Main Page ---
 if 'cleaned_data' in st.session_state and st.session_state['cleaned_data'] is not None:
-    st.success("🔗 Live Data Synced from Bank Extraction Tool!")
+    st.success("🔗 Live Data Auto-Synced from Bank Extraction Tool!")
     df_map = st.session_state['cleaned_data'].copy()
     
     if st.button("🗑️ Clear Synced Data & Upload Manually"):
@@ -57,9 +63,6 @@ else:
 
 # --- PROCESS DATA ---
 if df_map is not None:
-    st.write("---")
-    st.info("💡 Engine automatically assigned unknown entries to 'Suspense A/c'. You can change them in the table below.")
-    
     if 'Narration' not in df_map.columns:
         st.error("❌ Uploaded file mein 'Narration' column nahi hai.")
     else:
@@ -72,11 +75,40 @@ if df_map is not None:
                 return 'Suspense A/c'
                 
             df_map['Mapped_Ledger'] = df_map['Narration'].apply(auto_map)
-            df_map['Action_Required'] = df_map['Mapped_Ledger'].apply(lambda x: "⚠️ Review" if x == "Suspense A/c" else "✅ Ready")
+            st.session_state['cleaned_data'] = df_map # Update memory with new column
+
+        # ==========================================
+        # ⚡ NEW FEATURE: BULK QUICK-MAP
+        # ==========================================
+        st.write("---")
+        st.write("### ⚡ Bulk Quick-Map (Similar Entries)")
+        b1, b2, b3 = st.columns([2, 2, 1])
+        with b1:
+            search_term = st.text_input("If Narration contains (e.g. 'UPI', 'Swiggy'):")
+        with b2:
+            bulk_ledger = st.selectbox("Assign all to Ledger:", tally_ledgers, key="bulk_ledg")
+        with b3:
+            st.write("<br>", unsafe_allow_html=True)
+            if st.button("Apply to All", use_container_width=True):
+                if search_term:
+                    mask = df_map['Narration'].str.contains(search_term, case=False, na=False)
+                    count = mask.sum()
+                    if count > 0:
+                        df_map.loc[mask, 'Mapped_Ledger'] = bulk_ledger
+                        st.session_state['cleaned_data'] = df_map # Save changes
+                        st.rerun() # Refresh table
+                    else:
+                        st.warning("⚠️ Koi matching entry nahi mili!")
+        
+        st.write("---")
+        # ==========================================
+
+        df_map['Action_Required'] = df_map['Mapped_Ledger'].apply(lambda x: "⚠️ Review" if x == "Suspense A/c" else "✅ Ready")
 
         display_cols = ['Action_Required', 'Date', 'Narration', 'Debit', 'Credit', 'Mapped_Ledger']
         df_display = df_map[[c for c in display_cols if c in df_map.columns]]
         
+        st.info("💡 You can manually change individual ledgers in the table below.")
         edited_df = st.data_editor(
             df_display,
             column_config={
@@ -100,13 +132,9 @@ if df_map is not None:
             st.write("<br>", unsafe_allow_html=True)
             if st.button("📥 Download Final Tally-Ready File", use_container_width=True):
                 final_df = edited_df.drop(columns=['Action_Required'])
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    final_df.to_excel(writer, index=False, sheet_name='TallyData')
-                
                 st.download_button(
                     label="Download Excel (.xlsx)",
-                    data=output.getvalue(),
+                    data=to_excel(final_df),
                     file_name="Alpha_Final_Mapped.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True
