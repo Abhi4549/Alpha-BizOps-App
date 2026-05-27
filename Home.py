@@ -7,11 +7,11 @@ import re
 # ==========================================
 # 1. MEMORY & UI CONFIGURATION (THE BRIDGE)
 # ==========================================
-# Ye line aapke data ko memory mein save karegi
+# Ye line data ko memory mein save karegi taaki dusre page par ja sake
 if 'cleaned_data' not in st.session_state:
     st.session_state['cleaned_data'] = None
 
-st.set_page_config(page_title="BANK STATEMENT TO TALLY EXCEL", page_icon="🏦", layout="wide")
+st.set_page_config(page_title="Alpha BizOps Hub", page_icon="🏦", layout="wide")
 
 st.markdown("""
     <style>
@@ -22,10 +22,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="hero-title">🏦 BANK STATEMENT TO TALLY EXCEL</div>', unsafe_allow_html=True)
-st.markdown('<div class="hero-subtitle">100% Accurate Data Extraction for PDF & Excel with Auto-Reconciliation</div>', unsafe_allow_html=True)
+st.markdown('<div class="hero-subtitle">100% Accurate Data Extraction | Data will Auto-Sync to Ledger Mapper</div>', unsafe_allow_html=True)
 
 # ==========================================
-# 2. BACKEND: PDF MATH PARSER
+# 2. BACKEND: PDF & EXCEL PARSERS
 # ==========================================
 def process_mathematical_parser(file, password=""):
     raw_transactions = []
@@ -99,9 +99,6 @@ def process_mathematical_parser(file, password=""):
         return raw_transactions, meta, "Success"
     except Exception as e: return None, None, str(e)
 
-# ==========================================
-# 3. BACKEND: SMART EXCEL/CSV PARSER
-# ==========================================
 def process_excel_parser(file):
     raw_transactions = []
     meta = {"opening_bal": 0.0, "closing_bal": 0.0, "debit_count": 0, "credit_count": 0, "total_debit_amt": 0.0, "total_credit_amt": 0.0}
@@ -171,17 +168,14 @@ def to_excel(df):
     return output.getvalue()
 
 # ==========================================
-# 4. DASHBOARD EXECUTION
+# 3. DASHBOARD EXECUTION
 # ==========================================
-st.sidebar.title("System Engine")
-st.sidebar.success("✅ Multi-Format Engine Active")
-
 uploaded_file = st.file_uploader("Upload Bank Statement (PDF, Excel, CSV)", type=['pdf', 'xlsx', 'xls', 'csv'])
 
 if uploaded_file:
     pdf_password = st.text_input("PDF Password (if PDF is locked)", type="password") if uploaded_file.name.endswith('.pdf') else ""
     
-    if st.button("🚀 Process & Generate Tally Data", use_container_width=True):
+    if st.button("🚀 Process & Generate Data", use_container_width=True):
         with st.spinner("Processing Document... please wait"):
             if uploaded_file.name.endswith('.pdf'): raw_data, meta, status = process_mathematical_parser(uploaded_file, pdf_password)
             else: raw_data, meta, status = process_excel_parser(uploaded_file)
@@ -190,10 +184,10 @@ if uploaded_file:
                 df = pd.DataFrame(raw_data)
                 df_tally_ready = df[['Date', 'Narration', 'Debit', 'Credit', 'Balance']]
                 
-                # --- BRIDGE SENDER: Saving clean data to memory ---
+                # --- SENDER: Saving clean data to memory for the other page ---
                 st.session_state['cleaned_data'] = df_tally_ready.copy()
                 
-                st.success("✅ Extraction 100% Accurate! Data is synced to the Ledger Mapping tool.")
+                st.success("✅ Extraction 100% Accurate! Data is safely synced to the 'Ledger Mapping' page.")
                 
                 m1, m2, m3, m4 = st.columns(4)
                 m1.markdown(f'<div class="metric-card"><b>Opening Bal</b><br>₹ {meta["opening_bal"]:,.2f}</div>', unsafe_allow_html=True)
@@ -202,7 +196,7 @@ if uploaded_file:
                 m4.markdown(f'<div class="metric-card"><b>Closing Bal</b><br>₹ {meta["closing_bal"]:,.2f}</div>', unsafe_allow_html=True)
                 
                 st.write("<br>", unsafe_allow_html=True)
-                st.write("### 📝 Data Preview (Ready for Tally)")
+                st.write("### 📝 Data Preview")
                 st.dataframe(df_tally_ready, use_container_width=True) 
                 
                 c1, c2 = st.columns(2)
