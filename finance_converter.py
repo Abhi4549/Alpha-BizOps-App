@@ -7,7 +7,7 @@ import re
 # ==========================================
 # 1. FRONTEND: UI CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="BANK PDF TO TALLY EXCEL", page_icon="🏦", layout="wide")
+st.set_page_config(page_title="BANK STATEMENT TO TALLY EXCEL", page_icon="🏦", layout="wide")
 
 st.markdown("""
     <style>
@@ -17,26 +17,21 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="hero-title">🏦 BANK PDF TO TALLY EXCEL</div>', unsafe_allow_html=True)
-st.markdown('<div class="hero-subtitle">100% Accurate Data Extraction with Auto-Reconciliation & Dashboard</div>', unsafe_allow_html=True)
+st.markdown('<div class="hero-title">🏦 BANK STATEMENT TO TALLY EXCEL</div>', unsafe_allow_html=True)
+st.markdown('<div class="hero-subtitle">100% Accurate Data Extraction for PDF & Excel with Auto-Reconciliation</div>', unsafe_allow_html=True)
 
 # ==========================================
-# 2. BACKEND: 100% ACCURATE MATH PARSER
+# 2. BACKEND: PDF MATH PARSER
 # ==========================================
 def process_mathematical_parser(file, password=""):
     raw_transactions = []
     meta = {
-        "opening_bal": 0.0, 
-        "closing_bal": 0.0, 
-        "debit_count": 0, 
-        "credit_count": 0,
-        "total_debit_amt": 0.0,
-        "total_credit_amt": 0.0
+        "opening_bal": 0.0, "closing_bal": 0.0, "debit_count": 0, "credit_count": 0,
+        "total_debit_amt": 0.0, "total_credit_amt": 0.0
     }
     
     try:
         with pdfplumber.open(file, password=password) as pdf:
-            # Date Pattern
             date_pattern = re.compile(r'^(\d{1,2}[/\-\s][a-zA-Z]{3}[/\-\s]\d{2,4}|\d{1,2}[/\-\s]\d{1,2}[/\-\s]\d{2,4})')
             
             for page in pdf.pages:
@@ -80,12 +75,7 @@ def process_mathematical_parser(file, password=""):
                         if len(amount_list) > 1: txn_amount = amount_list[-2] 
                             
                         current_txn = {
-                            "Date": date_str,
-                            "Narration": narration,
-                            "Amount": txn_amount,
-                            "Balance": balance,
-                            "Debit": 0.0,   
-                            "Credit": 0.0   
+                            "Date": date_str, "Narration": narration, "Amount": txn_amount, "Balance": balance, "Debit": 0.0, "Credit": 0.0   
                         }
                     else:
                         if current_txn and len(line) > 2:
@@ -98,7 +88,7 @@ def process_mathematical_parser(file, password=""):
                 if current_txn:
                     raw_transactions.append(current_txn)
 
-        # --- MATHEMATICAL RECONCILIATION ---
+        # Mathematical Reconciliation
         for i in range(len(raw_transactions)):
             curr = raw_transactions[i]
             amt = curr["Amount"]
@@ -106,22 +96,17 @@ def process_mathematical_parser(file, password=""):
             if i > 0:
                 prev_bal = raw_transactions[i-1]["Balance"]
                 curr_bal = curr["Balance"]
-                
-                if round(prev_bal + amt, 2) == round(curr_bal, 2):
-                    curr["Credit"] = amt
-                elif round(prev_bal - amt, 2) == round(curr_bal, 2):
-                    curr["Debit"] = amt
+                if round(prev_bal + amt, 2) == round(curr_bal, 2): curr["Credit"] = amt
+                elif round(prev_bal - amt, 2) == round(curr_bal, 2): curr["Debit"] = amt
                 else:
                     diff = round(curr_bal - prev_bal, 2)
                     if diff > 0: curr["Credit"] = amt
                     elif diff < 0: curr["Debit"] = amt
             else:
-                if "RTGS" in curr["Narration"].upper() or "NEFT" in curr["Narration"].upper():
-                    curr["Debit"] = amt 
-                else:
-                    curr["Credit"] = amt 
+                if "RTGS" in curr["Narration"].upper() or "NEFT" in curr["Narration"].upper(): curr["Debit"] = amt 
+                else: curr["Credit"] = amt 
                     
-        # --- METRICS CALCULATION (With Amounts) ---
+        # Metrics Calculation
         if raw_transactions:
             for txn in raw_transactions:
                 if txn["Debit"] > 0: 
@@ -130,18 +115,99 @@ def process_mathematical_parser(file, password=""):
                 if txn["Credit"] > 0: 
                     meta["credit_count"] += 1
                     meta["total_credit_amt"] += txn["Credit"]
-                
-            # Closing Balance is simply the last transaction's balance
             meta["closing_bal"] = raw_transactions[-1]["Balance"]
-            
-            # Opening Balance via Reverse Math on first transaction
             first_txn = raw_transactions[0]
             meta["opening_bal"] = first_txn["Balance"] - first_txn["Credit"] + first_txn["Debit"]
 
         return raw_transactions, meta, "Success"
-        
     except Exception as e:
         return None, None, str(e)
+
+# ==========================================
+# 3. BACKEND: SMART EXCEL/CSV PARSER
+# ==========================================
+def process_excel_parser(file):
+    raw_transactions = []
+    meta = {
+        "opening_bal": 0.0, "closing_bal": 0.0, "debit_count": 0, "credit_count": 0,
+        "total_debit_amt": 0.0, "total_credit_amt": 0.0
+    }
+    try:
+        if file.name.endswith('.csv'):
+            df = pd.read_csv(file, skip_blank_lines=True)
+        else:
+            df = pd.read_excel(file)
+            
+        df.dropna(how='all', inplace=True)
+        df.dropna(axis=1, how='all', inplace=True)
+        df = df.reset_index(drop=True)
+        
+        # Smartly find the header row (ignoring bank logo/address info at top)
+        header_idx = -1
+        for i in range(min(20, len(df))):
+            row_str = ' '.join(str(x).lower() for x in df.iloc[i].values)
+            if 'date' in row_str and ('narration' in row_str or 'particulars' in row_str or 'description' in row_str or 'remarks' in row_str):
+                header_idx = i
+                break
+                
+        if header_idx != -1:
+            df.columns = df.iloc[header_idx]
+            df = df.iloc[header_idx+1:].reset_index(drop=True)
+            
+        df.columns = [str(c).strip().lower() for c in df.columns]
+        
+        # Map columns
+        cols = df.columns
+        date_col = next((c for c in cols if 'date' in c), None)
+        narration_col = next((c for c in cols if any(x in c for x in ['narration', 'particulars', 'description', 'remarks'])), None)
+        debit_col = next((c for c in cols if any(x in c for x in ['debit', 'withdrawal', 'dr'])), None)
+        credit_col = next((c for c in cols if any(x in c for x in ['credit', 'deposit', 'cr'])), None)
+        balance_col = next((c for c in cols if 'balance' in c), None)
+        
+        if not date_col or not narration_col:
+            return None, None, "Excel file me Date ya Narration column nahi mila. Format check karein."
+            
+        for _, row in df.iterrows():
+            raw_date = row[date_col]
+            if pd.isna(raw_date) or str(raw_date).strip().lower() == 'nan': continue
+                
+            if isinstance(raw_date, pd.Timestamp):
+                date_val = raw_date.strftime('%d/%m/%Y')
+            else:
+                date_val = str(raw_date).split(' ')[0]
+                
+            narration_val = str(row[narration_col]).strip()
+            if narration_val.lower() == 'nan': narration_val = ""
+            
+            def clean_val(v):
+                try:
+                    return float(str(v).replace(',', '').replace('Cr', '').replace('Dr', '').replace('cr', '').replace('dr', '').strip())
+                except:
+                    return 0.0
+                    
+            debit_val = clean_val(row[debit_col]) if debit_col else 0.0
+            credit_val = clean_val(row[credit_col]) if credit_col else 0.0
+            balance_val = clean_val(row[balance_col]) if balance_col else 0.0
+            
+            if debit_val > 0:
+                meta["debit_count"] += 1
+                meta["total_debit_amt"] += debit_val
+            if credit_val > 0:
+                meta["credit_count"] += 1
+                meta["total_credit_amt"] += credit_val
+                
+            raw_transactions.append({
+                "Date": date_val, "Narration": narration_val, "Debit": debit_val, "Credit": credit_val, "Balance": balance_val
+            })
+            
+        if raw_transactions:
+            meta["closing_bal"] = raw_transactions[-1]["Balance"]
+            first_txn = raw_transactions[0]
+            meta["opening_bal"] = first_txn["Balance"] - first_txn["Credit"] + first_txn["Debit"]
+
+        return raw_transactions, meta, "Success"
+    except Exception as e:
+        return None, None, f"Excel Error: {str(e)}"
 
 def to_excel(df):
     output = io.BytesIO()
@@ -150,29 +216,33 @@ def to_excel(df):
     return output.getvalue()
 
 # ==========================================
-# 3. DASHBOARD EXECUTION
+# 4. DASHBOARD EXECUTION
 # ==========================================
 st.sidebar.title("System Engine")
-st.sidebar.success("✅ Math Engine Active")
+st.sidebar.success("✅ Multi-Format Engine Active")
 
-uploaded_file = st.file_uploader("Upload Bank Statement (PDF)", type=['pdf'])
+# UPLOADER AB PDF, XLSX aur CSV DONO ACCEPT KAREGA
+uploaded_file = st.file_uploader("Upload Bank Statement (PDF, Excel or CSV)", type=['pdf', 'xlsx', 'xls', 'csv'])
 
 if uploaded_file:
-    pdf_password = st.text_input("PDF Password (if any)", type="password")
+    pdf_password = st.text_input("PDF Password (if PDF is locked)", type="password") if uploaded_file.name.endswith('.pdf') else ""
     
     if st.button("🚀 Process & Generate Tally Data", use_container_width=True):
-        with st.spinner("Reconciling logic applied... please wait"):
-            raw_data, meta, status = process_mathematical_parser(uploaded_file, pdf_password)
+        with st.spinner("Processing Document... please wait"):
+            
+            # Engine selection based on file type
+            if uploaded_file.name.endswith('.pdf'):
+                raw_data, meta, status = process_mathematical_parser(uploaded_file, pdf_password)
+            else:
+                raw_data, meta, status = process_excel_parser(uploaded_file)
             
             if raw_data:
                 df = pd.DataFrame(raw_data)
-                
-                # Sirf temporary 'Amount' column hata rahe hain. Balance ab Debit/Credit ke sath show hoga.
                 df_tally_ready = df[['Date', 'Narration', 'Debit', 'Credit', 'Balance']]
                 
                 st.success("✅ Extraction 100% Accurate & Reconciled!")
                 
-                # --- METRICS DASHBOARD (WITH TOTAL AMOUNTS) ---
+                # --- METRICS DASHBOARD ---
                 st.markdown("### 📊 Statement Summary")
                 m1, m2, m3, m4 = st.columns(4)
                 m1.markdown(f'<div class="metric-card"><b>Opening Bal</b><br>₹ {meta["opening_bal"]:,.2f}</div>', unsafe_allow_html=True)
@@ -182,8 +252,8 @@ if uploaded_file:
                 
                 st.write("<br>", unsafe_allow_html=True)
                 
-                # --- DATA PREVIEW (TALLY READY WITH BALANCE) ---
-                st.write("### 📝 Data Preview (Ready for Excel/Tally)")
+                # --- DATA PREVIEW ---
+                st.write("### 📝 Data Preview (Ready for Tally)")
                 st.dataframe(df_tally_ready, use_container_width=True) 
                 
                 # --- EXPORT BUTTONS ---
@@ -191,9 +261,9 @@ if uploaded_file:
                 c1, c2 = st.columns(2)
                 
                 csv_data = df_tally_ready.to_csv(index=False).encode('utf-8')
-                c1.download_button("Download CSV", csv_data, "alpha_tally.csv", "text/csv", use_container_width=True)
+                c1.download_button("Download CSV", csv_data, "alpha_tally_ready.csv", "text/csv", use_container_width=True)
                 
                 excel_data = to_excel(df_tally_ready)
-                c2.download_button("Download Excel (.xlsx)", excel_data, "alpha_tally.xlsx", use_container_width=True)
+                c2.download_button("Download Excel (.xlsx)", excel_data, "alpha_tally_ready.xlsx", use_container_width=True)
             else:
                 st.error(f"❌ Error: {status}")
