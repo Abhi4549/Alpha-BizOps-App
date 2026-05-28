@@ -7,7 +7,6 @@ import re
 # ==========================================
 # 1. MEMORY & UI CONFIGURATION (THE BRIDGE)
 # ==========================================
-# Ye line data ko memory mein save karegi taaki dusre page par ja sake
 if 'cleaned_data' not in st.session_state:
     st.session_state['cleaned_data'] = None
 
@@ -22,7 +21,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="hero-title">🏦 BANK STATEMENT TO TALLY EXCEL</div>', unsafe_allow_html=True)
-st.markdown('<div class="hero-subtitle">100% Accurate Data Extraction | Data will Auto-Sync to Ledger Mapper</div>', unsafe_allow_html=True)
+st.markdown('<div class="hero-subtitle">100% Accurate Data Extraction | Filter by Date | Auto-Sync to Ledger Mapper</div>', unsafe_allow_html=True)
 
 # ==========================================
 # 2. BACKEND: PDF & EXCEL PARSERS
@@ -97,14 +96,27 @@ def process_mathematical_parser(file, password=""):
             meta["closing_bal"] = raw_transactions[-1]["Balance"]
             meta["opening_bal"] = raw_transactions[0]["Balance"] - raw_transactions[0]["Credit"] + raw_transactions[0]["Debit"]
         return raw_transactions, meta, "Success"
-    except Exception as e: return None, None, str(e)
+    except Exception as e: return None, None, f"PDF Error: {str(e)}"
 
-def process_excel_parser(file):
+# ⚡ EXCEL UNLOCK ENGINE
+def process_excel_parser(file, password=""):
     raw_transactions = []
     meta = {"opening_bal": 0.0, "closing_bal": 0.0, "debit_count": 0, "credit_count": 0, "total_debit_amt": 0.0, "total_credit_amt": 0.0}
     try:
-        if file.name.endswith('.csv'): df = pd.read_csv(file, skip_blank_lines=True)
-        else: df = pd.read_excel(file)
+        # Check for Password and Decrypt if necessary
+        if file.name.endswith('.csv'): 
+            df = pd.read_csv(file, skip_blank_lines=True)
+        else:
+            if password:
+                import msoffcrypto
+                decrypted_file = io.BytesIO()
+                office_file = msoffcrypto.OfficeFile(file)
+                office_file.load_key(password=password)
+                office_file.decrypt(decrypted_file)
+                decrypted_file.seek(0)
+                df = pd.read_excel(decrypted_file)
+            else:
+                df = pd.read_excel(file)
             
         df.dropna(how='all', inplace=True)
         df.dropna(axis=1, how='all', inplace=True)
@@ -159,7 +171,7 @@ def process_excel_parser(file):
             meta["closing_bal"] = raw_transactions[-1]["Balance"]
             meta["opening_bal"] = raw_transactions[0]["Balance"] - raw_transactions[0]["Credit"] + raw_transactions[0]["Debit"]
         return raw_transactions, meta, "Success"
-    except Exception as e: return None, None, f"Excel Error: {str(e)}"
+    except Exception as e: return None, None, f"Excel Unlocking/Parsing Error: {str(e)}"
 
 def to_excel(df):
     output = io.BytesIO()
@@ -173,21 +185,66 @@ def to_excel(df):
 uploaded_file = st.file_uploader("Upload Bank Statement (PDF, Excel, CSV)", type=['pdf', 'xlsx', 'xls', 'csv'])
 
 if uploaded_file:
-    pdf_password = st.text_input("PDF Password (if PDF is locked)", type="password") if uploaded_file.name.endswith('.pdf') else ""
+    # ⚡ Password box ab sab locked files (PDF + Excel) ke liye open rahega
+    file_password = st.text_input("Document Password (If Locked)", type="password") 
     
     if st.button("🚀 Process & Generate Data", use_container_width=True):
-        with st.spinner("Processing Document... please wait"):
-            if uploaded_file.name.endswith('.pdf'): raw_data, meta, status = process_mathematical_parser(uploaded_file, pdf_password)
-            else: raw_data, meta, status = process_excel_parser(uploaded_file)
+        with st.spinner("Processing & Decrypting Document... please wait"):
+            
+            if uploaded_file.name.endswith('.pdf'): 
+                raw_data, meta, status = process_mathematical_parser(uploaded_file, file_password)
+            else: 
+                raw_data, meta, status = process_excel_parser(uploaded_file, file_password)
             
             if raw_data:
                 df = pd.DataFrame(raw_data)
                 df_tally_ready = df[['Date', 'Narration', 'Debit', 'Credit', 'Balance']]
                 
-                # --- SENDER: Saving clean data to memory for the other page ---
-                st.session_state['cleaned_data'] = df_tally_ready.copy()
+                # ==========================================
+                # DATE FILTER LOGIC
+                # ==========================================
+                st.write("---")
+                st.markdown("### 📅 Filter Data by Date Range")
                 
-                st.success("✅ Extraction 100% Accurate! Data is safely synced to the 'Ledger Mapping' page.")
+                df_tally_ready['Date_Obj'] = pd.to_datetime(df_tally_ready['Date'], format='%d/%m/%Y', errors='coerce')
+                valid_dates = df_tally_ready.dropna(subset=['Date_Obj'])
+                
+                if not valid_dates.empty:
+                    min_date = valid_dates['Date_Obj'].min().date()
+                    max_date = valid_dates['Date_Obj'].max().date()
+                    
+                    col_d1, col_d2 = st.columns([1, 2])
+                    with col_d1:
+                        selected_dates = st.date_input("Select 'From' & 'To' Date:", value=(min_date, max_date), min_value=min_date, max_value=max_date)
+                    
+                    try:
+                        if len(selected_dates) == 2:
+                            start_date, end_date = selected_dates
+                            mask = (df_tally_ready['Date_Obj'].dt.date >= start_date) & (df_tally_ready['Date_Obj'].dt.date <= end_date)
+                            filtered_df = df_tally_ready.loc[mask].copy()
+                        else:
+                            filtered_df = df_tally_ready.copy()
+                    except:
+                        filtered_df = df_tally_ready.copy()
+                else:
+                    filtered_df = df_tally_ready.copy()
+                    
+                filtered_df = filtered_df.drop(columns=['Date_Obj'], errors='ignore')
+                
+                if not filtered_df.empty:
+                    meta["opening_bal"] = filtered_df.iloc[0]['Balance'] - filtered_df.iloc[0]['Credit'] + filtered_df.iloc[0]['Debit']
+                    meta["closing_bal"] = filtered_df.iloc[-1]['Balance']
+                    meta["debit_count"] = (filtered_df['Debit'] > 0).sum()
+                    meta["credit_count"] = (filtered_df['Credit'] > 0).sum()
+                    meta["total_debit_amt"] = filtered_df['Debit'].sum()
+                    meta["total_credit_amt"] = filtered_df['Credit'].sum()
+                else:
+                    meta = {k: 0 for k in meta}
+                
+                # --- SENDER: Memory sync to Ledger Mapper ---
+                st.session_state['cleaned_data'] = filtered_df.copy()
+                
+                st.success("✅ Extraction & Filtering Complete! Data is Auto-Synced to 'Ledger Mapping' page.")
                 
                 m1, m2, m3, m4 = st.columns(4)
                 m1.markdown(f'<div class="metric-card"><b>Opening Bal</b><br>₹ {meta["opening_bal"]:,.2f}</div>', unsafe_allow_html=True)
@@ -196,11 +253,11 @@ if uploaded_file:
                 m4.markdown(f'<div class="metric-card"><b>Closing Bal</b><br>₹ {meta["closing_bal"]:,.2f}</div>', unsafe_allow_html=True)
                 
                 st.write("<br>", unsafe_allow_html=True)
-                st.write("### 📝 Data Preview")
-                st.dataframe(df_tally_ready, use_container_width=True) 
+                st.write("### 📝 Filtered Data Preview")
+                st.dataframe(filtered_df, use_container_width=True) 
                 
                 c1, c2 = st.columns(2)
-                c1.download_button("Download CSV", df_tally_ready.to_csv(index=False).encode('utf-8'), "alpha_tally_ready.csv", "text/csv", use_container_width=True)
-                c2.download_button("Download Excel (.xlsx)", to_excel(df_tally_ready), "alpha_tally_ready.xlsx", use_container_width=True)
+                c1.download_button("Download CSV", filtered_df.to_csv(index=False).encode('utf-8'), "alpha_tally_ready.csv", "text/csv", use_container_width=True)
+                c2.download_button("Download Excel (.xlsx)", to_excel(filtered_df), "alpha_tally_ready.xlsx", use_container_width=True)
             else:
                 st.error(f"❌ Error: {status}")
