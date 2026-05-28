@@ -23,7 +23,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="hero-title">🏦 BANK STATEMENT TO TALLY EXCEL</div>', unsafe_allow_html=True)
-st.markdown('<div class="hero-subtitle">100% Accurate Data Extraction | Filter by Date | Auto-Sync to Ledger Mapper</div>', unsafe_allow_html=True)
+st.markdown('<div class="hero-subtitle">100% Accurate Data Extraction | Custom Date Filter | Auto-Sync to Ledger Mapper</div>', unsafe_allow_html=True)
 
 # ==========================================
 # 2. BACKEND: PDF & EXCEL PARSERS
@@ -166,8 +166,7 @@ if uploaded_file:
     file_password = st.text_input("Document Password (If Locked)", type="password") 
     
     if st.button("🚀 Process & Extract Data", use_container_width=True):
-        with st.spinner("Processing & Decrypting Document... please wait"):
-            
+        with st.spinner("Processing Document... please wait"):
             if uploaded_file.name.endswith('.pdf'): 
                 raw_data, status = process_mathematical_parser(uploaded_file, file_password)
             else: 
@@ -177,22 +176,19 @@ if uploaded_file:
                 df = pd.DataFrame(raw_data)
                 df_tally_ready = df[['Date', 'Narration', 'Debit', 'Credit', 'Balance']]
                 
-                # SENDER 1: Raw data ko memory mein save karo button ke bahar use karne ke liye
                 st.session_state['raw_extracted_data'] = df_tally_ready.copy()
-                st.success("✅ Extraction Successful! Apply filters below.")
             else:
                 st.error(f"❌ Error: {status}")
 
 # ==========================================
-# 4. DATE FILTER & DISPLAY BLOCK (OUTSIDE BUTTON)
+# 4. DATE FILTER & DISPLAY BLOCK
 # ==========================================
-if st.session_state['raw_extracted_data'] is not None:
+if st.session_state.get('raw_extracted_data') is not None:
     full_df = st.session_state['raw_extracted_data'].copy()
     
     st.write("---")
-    st.markdown("### 📅 Filter Data by Date Range")
+    st.markdown("### 📅 Select Specific Dates for Tally")
     
-    # Date logic setup
     full_df['Date_Obj'] = pd.to_datetime(full_df['Date'], format='%d/%m/%Y', errors='coerce')
     valid_dates = full_df.dropna(subset=['Date_Obj'])
     
@@ -200,25 +196,20 @@ if st.session_state['raw_extracted_data'] is not None:
         min_date = valid_dates['Date_Obj'].min().date()
         max_date = valid_dates['Date_Obj'].max().date()
         
-        col_d1, col_d2 = st.columns([1, 2])
-        with col_d1:
-            selected_dates = st.date_input("Select 'From' & 'To' Date:", value=(min_date, max_date), min_value=min_date, max_value=max_date, key="date_filter")
+        c1, c2 = st.columns(2)
+        with c1:
+            from_date = st.date_input("From Date:", value=min_date, min_value=min_date, max_value=max_date)
+        with c2:
+            to_date = st.date_input("To Date:", value=max_date, min_value=min_date, max_value=max_date)
         
-        try:
-            if len(selected_dates) == 2:
-                start_date, end_date = selected_dates
-                mask = (full_df['Date_Obj'].dt.date >= start_date) & (full_df['Date_Obj'].dt.date <= end_date)
-                filtered_df = full_df.loc[mask].copy()
-            else:
-                filtered_df = full_df.copy()
-        except:
-            filtered_df = full_df.copy()
+        mask = (full_df['Date_Obj'].dt.date >= from_date) & (full_df['Date_Obj'].dt.date <= to_date)
+        filtered_df = full_df.loc[mask].copy()
     else:
         filtered_df = full_df.copy()
+        from_date, to_date = None, None
         
     filtered_df = filtered_df.drop(columns=['Date_Obj'], errors='ignore')
     
-    # Recalculating Metrics for the exact selected dates
     meta_filtered = {"opening_bal": 0.0, "closing_bal": 0.0, "debit_count": 0, "credit_count": 0, "total_debit_amt": 0.0, "total_credit_amt": 0.0}
     if not filtered_df.empty:
         meta_filtered["opening_bal"] = filtered_df.iloc[0]['Balance'] - filtered_df.iloc[0]['Credit'] + filtered_df.iloc[0]['Debit']
@@ -228,10 +219,11 @@ if st.session_state['raw_extracted_data'] is not None:
         meta_filtered["total_debit_amt"] = filtered_df['Debit'].sum()
         meta_filtered["total_credit_amt"] = filtered_df['Credit'].sum()
     
-    # SENDER 2: Filtered data ko 'Ledger Mapper' page ke liye sync karo
+    # Send filtered data to the Ledger Mapper bridge
     st.session_state['cleaned_data'] = filtered_df.copy()
     
-    # Display Dashboard
+    st.success("✅ Data Ready! Dashboard and Export files are updated according to your Date Filter.")
+    
     m1, m2, m3, m4 = st.columns(4)
     m1.markdown(f'<div class="metric-card"><b>Opening Bal</b><br>₹ {meta_filtered["opening_bal"]:,.2f}</div>', unsafe_allow_html=True)
     m2.markdown(f'<div class="metric-card"><b>Total Debits (-)</b><br>₹ {meta_filtered["total_debit_amt"]:,.2f}<br><span style="font-size:13px; color:#6B7280;">({meta_filtered["debit_count"]} Txns)</span></div>', unsafe_allow_html=True)
@@ -239,7 +231,10 @@ if st.session_state['raw_extracted_data'] is not None:
     m4.markdown(f'<div class="metric-card"><b>Closing Bal</b><br>₹ {meta_filtered["closing_bal"]:,.2f}</div>', unsafe_allow_html=True)
     
     st.write("<br>", unsafe_allow_html=True)
-    st.write("### 📝 Filtered Data Preview")
+    if from_date and to_date:
+        st.write(f"### 📝 Data Preview (From {from_date.strftime('%d/%m/%Y')} to {to_date.strftime('%d/%m/%Y')})")
+    else:
+        st.write("### 📝 Data Preview")
     st.dataframe(filtered_df, use_container_width=True) 
     
     c1, c2 = st.columns(2)
