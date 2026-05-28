@@ -3,6 +3,7 @@ import pandas as pd
 import pdfplumber
 import io
 import re
+import datetime
 
 # ==========================================
 # 1. MEMORY & UI CONFIGURATION (THE BRIDGE)
@@ -175,7 +176,6 @@ if uploaded_file:
             if raw_data:
                 df = pd.DataFrame(raw_data)
                 df_tally_ready = df[['Date', 'Narration', 'Debit', 'Credit', 'Balance']]
-                
                 st.session_state['raw_extracted_data'] = df_tally_ready.copy()
             else:
                 st.error(f"❌ Error: {status}")
@@ -189,26 +189,32 @@ if st.session_state.get('raw_extracted_data') is not None:
     st.write("---")
     st.markdown("### 📅 Select Specific Dates for Tally")
     
-    full_df['Date_Obj'] = pd.to_datetime(full_df['Date'], format='%d/%m/%Y', errors='coerce')
+    # ⚡ DATE FIX: Ab date column kaise bhi ho, ye pakad lega
+    full_df['Date_Obj'] = pd.to_datetime(full_df['Date'], errors='coerce', dayfirst=True)
     valid_dates = full_df.dropna(subset=['Date_Obj'])
     
     if not valid_dates.empty:
         min_date = valid_dates['Date_Obj'].min().date()
         max_date = valid_dates['Date_Obj'].max().date()
-        
-        # ---> FILTER AB MAIN SCREEN PAR DATA KE THEEK UPAR HAI <---
-        c1, c2 = st.columns(2)
-        with c1:
-            from_date = st.date_input("From Date:", value=min_date, min_value=min_date, max_value=max_date)
-        with c2:
-            to_date = st.date_input("To Date:", value=max_date, min_value=min_date, max_value=max_date)
-        
-        # Filter Logic
-        mask = (full_df['Date_Obj'].dt.date >= from_date) & (full_df['Date_Obj'].dt.date <= to_date)
-        filtered_df = full_df.loc[mask].copy()
     else:
+        # Agar date padhi nahi gayi, toh bhi boxes hamesha aayenge
+        min_date = datetime.date(2023, 4, 1)
+        max_date = datetime.date.today()
+        
+    # YAHAN AAPKE BOXES HAMESHA DIKHENGE
+    c1, c2 = st.columns(2)
+    with c1:
+        from_date = st.date_input("From Date:", value=min_date)
+    with c2:
+        to_date = st.date_input("To Date:", value=max_date)
+    
+    # Date Filtering Logic
+    mask = (full_df['Date_Obj'].dt.date >= from_date) & (full_df['Date_Obj'].dt.date <= to_date)
+    filtered_df = full_df.loc[mask].copy()
+    
+    if filtered_df.empty:
+        st.warning("⚠️ Warning: No transactions found for these dates. Showing all data.")
         filtered_df = full_df.copy()
-        from_date, to_date = None, None
         
     filtered_df = filtered_df.drop(columns=['Date_Obj'], errors='ignore')
     
@@ -226,7 +232,7 @@ if st.session_state.get('raw_extracted_data') is not None:
     st.session_state['cleaned_data'] = filtered_df.copy()
     
     # ------------------ DASHBOARD DISPLAY ------------------
-    st.success("✅ Data Ready! The table and exports below are updated based on the dates selected above.")
+    st.success("✅ Data Ready! The table and exports below are automatically updated.")
     
     m1, m2, m3, m4 = st.columns(4)
     m1.markdown(f'<div class="metric-card"><b>Opening Bal</b><br>₹ {meta_filtered["opening_bal"]:,.2f}</div>', unsafe_allow_html=True)
@@ -235,10 +241,7 @@ if st.session_state.get('raw_extracted_data') is not None:
     m4.markdown(f'<div class="metric-card"><b>Closing Bal</b><br>₹ {meta_filtered["closing_bal"]:,.2f}</div>', unsafe_allow_html=True)
     
     st.write("<br>", unsafe_allow_html=True)
-    if from_date and to_date:
-        st.write(f"### 📝 Data Preview (From {from_date.strftime('%d/%m/%Y')} to {to_date.strftime('%d/%m/%Y')})")
-    else:
-        st.write("### 📝 Data Preview")
+    st.write("### 📝 Data Preview")
         
     st.dataframe(filtered_df, use_container_width=True) 
     
