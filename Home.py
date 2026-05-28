@@ -7,6 +7,8 @@ import re
 # ==========================================
 # 1. MEMORY & UI CONFIGURATION (THE BRIDGE)
 # ==========================================
+if 'raw_extracted_data' not in st.session_state:
+    st.session_state['raw_extracted_data'] = None
 if 'cleaned_data' not in st.session_state:
     st.session_state['cleaned_data'] = None
 
@@ -28,7 +30,6 @@ st.markdown('<div class="hero-subtitle">100% Accurate Data Extraction | Filter b
 # ==========================================
 def process_mathematical_parser(file, password=""):
     raw_transactions = []
-    meta = {"opening_bal": 0.0, "closing_bal": 0.0, "debit_count": 0, "credit_count": 0, "total_debit_amt": 0.0, "total_credit_amt": 0.0}
     try:
         with pdfplumber.open(file, password=password) as pdf:
             date_pattern = re.compile(r'^(\d{1,2}[/\-\s][a-zA-Z]{3}[/\-\s]\d{2,4}|\d{1,2}[/\-\s]\d{1,2}[/\-\s]\d{2,4})')
@@ -85,25 +86,12 @@ def process_mathematical_parser(file, password=""):
                 if "RTGS" in curr["Narration"].upper() or "NEFT" in curr["Narration"].upper(): curr["Debit"] = amt 
                 else: curr["Credit"] = amt 
                     
-        if raw_transactions:
-            for txn in raw_transactions:
-                if txn["Debit"] > 0: 
-                    meta["debit_count"] += 1
-                    meta["total_debit_amt"] += txn["Debit"]
-                if txn["Credit"] > 0: 
-                    meta["credit_count"] += 1
-                    meta["total_credit_amt"] += txn["Credit"]
-            meta["closing_bal"] = raw_transactions[-1]["Balance"]
-            meta["opening_bal"] = raw_transactions[0]["Balance"] - raw_transactions[0]["Credit"] + raw_transactions[0]["Debit"]
-        return raw_transactions, meta, "Success"
-    except Exception as e: return None, None, f"PDF Error: {str(e)}"
+        return raw_transactions, "Success"
+    except Exception as e: return None, f"PDF Error: {str(e)}"
 
-# ⚡ EXCEL UNLOCK ENGINE
 def process_excel_parser(file, password=""):
     raw_transactions = []
-    meta = {"opening_bal": 0.0, "closing_bal": 0.0, "debit_count": 0, "credit_count": 0, "total_debit_amt": 0.0, "total_credit_amt": 0.0}
     try:
-        # Check for Password and Decrypt if necessary
         if file.name.endswith('.csv'): 
             df = pd.read_csv(file, skip_blank_lines=True)
         else:
@@ -141,7 +129,7 @@ def process_excel_parser(file, password=""):
         credit_col = next((c for c in cols if any(x in c for x in ['credit', 'deposit', 'cr'])), None)
         balance_col = next((c for c in cols if 'balance' in c), None)
         
-        if not date_col or not narration_col: return None, None, "Format error: Date/Narration not found."
+        if not date_col or not narration_col: return None, "Format error: Date/Narration not found."
             
         for _, row in df.iterrows():
             raw_date = row[date_col]
@@ -157,21 +145,11 @@ def process_excel_parser(file, password=""):
             debit_val = clean_val(row[debit_col]) if debit_col else 0.0
             credit_val = clean_val(row[credit_col]) if credit_col else 0.0
             balance_val = clean_val(row[balance_col]) if balance_col else 0.0
-            
-            if debit_val > 0:
-                meta["debit_count"] += 1
-                meta["total_debit_amt"] += debit_val
-            if credit_val > 0:
-                meta["credit_count"] += 1
-                meta["total_credit_amt"] += credit_val
                 
             raw_transactions.append({"Date": date_val, "Narration": narration_val, "Debit": debit_val, "Credit": credit_val, "Balance": balance_val})
             
-        if raw_transactions:
-            meta["closing_bal"] = raw_transactions[-1]["Balance"]
-            meta["opening_bal"] = raw_transactions[0]["Balance"] - raw_transactions[0]["Credit"] + raw_transactions[0]["Debit"]
-        return raw_transactions, meta, "Success"
-    except Exception as e: return None, None, f"Excel Unlocking/Parsing Error: {str(e)}"
+        return raw_transactions, "Success"
+    except Exception as e: return None, f"Excel Error: {str(e)}"
 
 def to_excel(df):
     output = io.BytesIO()
@@ -180,84 +158,90 @@ def to_excel(df):
     return output.getvalue()
 
 # ==========================================
-# 3. DASHBOARD EXECUTION
+# 3. DATA EXTRACTION BLOCK
 # ==========================================
 uploaded_file = st.file_uploader("Upload Bank Statement (PDF, Excel, CSV)", type=['pdf', 'xlsx', 'xls', 'csv'])
 
 if uploaded_file:
-    # ⚡ Password box ab sab locked files (PDF + Excel) ke liye open rahega
     file_password = st.text_input("Document Password (If Locked)", type="password") 
     
-    if st.button("🚀 Process & Generate Data", use_container_width=True):
+    if st.button("🚀 Process & Extract Data", use_container_width=True):
         with st.spinner("Processing & Decrypting Document... please wait"):
             
             if uploaded_file.name.endswith('.pdf'): 
-                raw_data, meta, status = process_mathematical_parser(uploaded_file, file_password)
+                raw_data, status = process_mathematical_parser(uploaded_file, file_password)
             else: 
-                raw_data, meta, status = process_excel_parser(uploaded_file, file_password)
+                raw_data, status = process_excel_parser(uploaded_file, file_password)
             
             if raw_data:
                 df = pd.DataFrame(raw_data)
                 df_tally_ready = df[['Date', 'Narration', 'Debit', 'Credit', 'Balance']]
                 
-                # ==========================================
-                # DATE FILTER LOGIC
-                # ==========================================
-                st.write("---")
-                st.markdown("### 📅 Filter Data by Date Range")
-                
-                df_tally_ready['Date_Obj'] = pd.to_datetime(df_tally_ready['Date'], format='%d/%m/%Y', errors='coerce')
-                valid_dates = df_tally_ready.dropna(subset=['Date_Obj'])
-                
-                if not valid_dates.empty:
-                    min_date = valid_dates['Date_Obj'].min().date()
-                    max_date = valid_dates['Date_Obj'].max().date()
-                    
-                    col_d1, col_d2 = st.columns([1, 2])
-                    with col_d1:
-                        selected_dates = st.date_input("Select 'From' & 'To' Date:", value=(min_date, max_date), min_value=min_date, max_value=max_date)
-                    
-                    try:
-                        if len(selected_dates) == 2:
-                            start_date, end_date = selected_dates
-                            mask = (df_tally_ready['Date_Obj'].dt.date >= start_date) & (df_tally_ready['Date_Obj'].dt.date <= end_date)
-                            filtered_df = df_tally_ready.loc[mask].copy()
-                        else:
-                            filtered_df = df_tally_ready.copy()
-                    except:
-                        filtered_df = df_tally_ready.copy()
-                else:
-                    filtered_df = df_tally_ready.copy()
-                    
-                filtered_df = filtered_df.drop(columns=['Date_Obj'], errors='ignore')
-                
-                if not filtered_df.empty:
-                    meta["opening_bal"] = filtered_df.iloc[0]['Balance'] - filtered_df.iloc[0]['Credit'] + filtered_df.iloc[0]['Debit']
-                    meta["closing_bal"] = filtered_df.iloc[-1]['Balance']
-                    meta["debit_count"] = (filtered_df['Debit'] > 0).sum()
-                    meta["credit_count"] = (filtered_df['Credit'] > 0).sum()
-                    meta["total_debit_amt"] = filtered_df['Debit'].sum()
-                    meta["total_credit_amt"] = filtered_df['Credit'].sum()
-                else:
-                    meta = {k: 0 for k in meta}
-                
-                # --- SENDER: Memory sync to Ledger Mapper ---
-                st.session_state['cleaned_data'] = filtered_df.copy()
-                
-                st.success("✅ Extraction & Filtering Complete! Data is Auto-Synced to 'Ledger Mapping' page.")
-                
-                m1, m2, m3, m4 = st.columns(4)
-                m1.markdown(f'<div class="metric-card"><b>Opening Bal</b><br>₹ {meta["opening_bal"]:,.2f}</div>', unsafe_allow_html=True)
-                m2.markdown(f'<div class="metric-card"><b>Total Debits (-)</b><br>₹ {meta["total_debit_amt"]:,.2f}<br><span style="font-size:13px; color:#6B7280;">({meta["debit_count"]} Txns)</span></div>', unsafe_allow_html=True)
-                m3.markdown(f'<div class="metric-card"><b>Total Credits (+)</b><br>₹ {meta["total_credit_amt"]:,.2f}<br><span style="font-size:13px; color:#6B7280;">({meta["credit_count"]} Txns)</span></div>', unsafe_allow_html=True)
-                m4.markdown(f'<div class="metric-card"><b>Closing Bal</b><br>₹ {meta["closing_bal"]:,.2f}</div>', unsafe_allow_html=True)
-                
-                st.write("<br>", unsafe_allow_html=True)
-                st.write("### 📝 Filtered Data Preview")
-                st.dataframe(filtered_df, use_container_width=True) 
-                
-                c1, c2 = st.columns(2)
-                c1.download_button("Download CSV", filtered_df.to_csv(index=False).encode('utf-8'), "alpha_tally_ready.csv", "text/csv", use_container_width=True)
-                c2.download_button("Download Excel (.xlsx)", to_excel(filtered_df), "alpha_tally_ready.xlsx", use_container_width=True)
+                # SENDER 1: Raw data ko memory mein save karo button ke bahar use karne ke liye
+                st.session_state['raw_extracted_data'] = df_tally_ready.copy()
+                st.success("✅ Extraction Successful! Apply filters below.")
             else:
                 st.error(f"❌ Error: {status}")
+
+# ==========================================
+# 4. DATE FILTER & DISPLAY BLOCK (OUTSIDE BUTTON)
+# ==========================================
+if st.session_state['raw_extracted_data'] is not None:
+    full_df = st.session_state['raw_extracted_data'].copy()
+    
+    st.write("---")
+    st.markdown("### 📅 Filter Data by Date Range")
+    
+    # Date logic setup
+    full_df['Date_Obj'] = pd.to_datetime(full_df['Date'], format='%d/%m/%Y', errors='coerce')
+    valid_dates = full_df.dropna(subset=['Date_Obj'])
+    
+    if not valid_dates.empty:
+        min_date = valid_dates['Date_Obj'].min().date()
+        max_date = valid_dates['Date_Obj'].max().date()
+        
+        col_d1, col_d2 = st.columns([1, 2])
+        with col_d1:
+            selected_dates = st.date_input("Select 'From' & 'To' Date:", value=(min_date, max_date), min_value=min_date, max_value=max_date, key="date_filter")
+        
+        try:
+            if len(selected_dates) == 2:
+                start_date, end_date = selected_dates
+                mask = (full_df['Date_Obj'].dt.date >= start_date) & (full_df['Date_Obj'].dt.date <= end_date)
+                filtered_df = full_df.loc[mask].copy()
+            else:
+                filtered_df = full_df.copy()
+        except:
+            filtered_df = full_df.copy()
+    else:
+        filtered_df = full_df.copy()
+        
+    filtered_df = filtered_df.drop(columns=['Date_Obj'], errors='ignore')
+    
+    # Recalculating Metrics for the exact selected dates
+    meta_filtered = {"opening_bal": 0.0, "closing_bal": 0.0, "debit_count": 0, "credit_count": 0, "total_debit_amt": 0.0, "total_credit_amt": 0.0}
+    if not filtered_df.empty:
+        meta_filtered["opening_bal"] = filtered_df.iloc[0]['Balance'] - filtered_df.iloc[0]['Credit'] + filtered_df.iloc[0]['Debit']
+        meta_filtered["closing_bal"] = filtered_df.iloc[-1]['Balance']
+        meta_filtered["debit_count"] = (filtered_df['Debit'] > 0).sum()
+        meta_filtered["credit_count"] = (filtered_df['Credit'] > 0).sum()
+        meta_filtered["total_debit_amt"] = filtered_df['Debit'].sum()
+        meta_filtered["total_credit_amt"] = filtered_df['Credit'].sum()
+    
+    # SENDER 2: Filtered data ko 'Ledger Mapper' page ke liye sync karo
+    st.session_state['cleaned_data'] = filtered_df.copy()
+    
+    # Display Dashboard
+    m1, m2, m3, m4 = st.columns(4)
+    m1.markdown(f'<div class="metric-card"><b>Opening Bal</b><br>₹ {meta_filtered["opening_bal"]:,.2f}</div>', unsafe_allow_html=True)
+    m2.markdown(f'<div class="metric-card"><b>Total Debits (-)</b><br>₹ {meta_filtered["total_debit_amt"]:,.2f}<br><span style="font-size:13px; color:#6B7280;">({meta_filtered["debit_count"]} Txns)</span></div>', unsafe_allow_html=True)
+    m3.markdown(f'<div class="metric-card"><b>Total Credits (+)</b><br>₹ {meta_filtered["total_credit_amt"]:,.2f}<br><span style="font-size:13px; color:#6B7280;">({meta_filtered["credit_count"]} Txns)</span></div>', unsafe_allow_html=True)
+    m4.markdown(f'<div class="metric-card"><b>Closing Bal</b><br>₹ {meta_filtered["closing_bal"]:,.2f}</div>', unsafe_allow_html=True)
+    
+    st.write("<br>", unsafe_allow_html=True)
+    st.write("### 📝 Filtered Data Preview")
+    st.dataframe(filtered_df, use_container_width=True) 
+    
+    c1, c2 = st.columns(2)
+    c1.download_button("Download CSV", filtered_df.to_csv(index=False).encode('utf-8'), "alpha_tally_ready.csv", "text/csv", use_container_width=True)
+    c2.download_button("Download Excel (.xlsx)", to_excel(filtered_df), "alpha_tally_ready.xlsx", use_container_width=True)
