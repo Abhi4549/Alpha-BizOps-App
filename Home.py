@@ -181,14 +181,12 @@ if uploaded_file:
                 st.error(f"❌ Error: {status}")
 
 # ==========================================
-# 4. DATE FILTER & DISPLAY BLOCK
+# 4. SIDEBAR DATE FILTER & DISPLAY BLOCK
 # ==========================================
 if st.session_state.get('raw_extracted_data') is not None:
     full_df = st.session_state['raw_extracted_data'].copy()
     
-    st.write("---")
-    st.markdown("### 📅 Select Specific Dates for Tally")
-    
+    # Text Date ko proper DateTime me convert karna filter ke liye
     full_df['Date_Obj'] = pd.to_datetime(full_df['Date'], format='%d/%m/%Y', errors='coerce')
     valid_dates = full_df.dropna(subset=['Date_Obj'])
     
@@ -196,12 +194,13 @@ if st.session_state.get('raw_extracted_data') is not None:
         min_date = valid_dates['Date_Obj'].min().date()
         max_date = valid_dates['Date_Obj'].max().date()
         
-        c1, c2 = st.columns(2)
-        with c1:
-            from_date = st.date_input("From Date:", value=min_date, min_value=min_date, max_value=max_date)
-        with c2:
-            to_date = st.date_input("To Date:", value=max_date, min_value=min_date, max_value=max_date)
+        # ---> FILTER AB SIDEBAR MEIN HAI <---
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("### 📅 Filter Dates")
+        from_date = st.sidebar.date_input("From Date:", value=min_date, min_value=min_date, max_value=max_date)
+        to_date = st.sidebar.date_input("To Date:", value=max_date, min_value=min_date, max_value=max_date)
         
+        # Filter Logic
         mask = (full_df['Date_Obj'].dt.date >= from_date) & (full_df['Date_Obj'].dt.date <= to_date)
         filtered_df = full_df.loc[mask].copy()
     else:
@@ -210,6 +209,7 @@ if st.session_state.get('raw_extracted_data') is not None:
         
     filtered_df = filtered_df.drop(columns=['Date_Obj'], errors='ignore')
     
+    # Naye Filtered Data ke hisaab se Meta Recalculate karna
     meta_filtered = {"opening_bal": 0.0, "closing_bal": 0.0, "debit_count": 0, "credit_count": 0, "total_debit_amt": 0.0, "total_credit_amt": 0.0}
     if not filtered_df.empty:
         meta_filtered["opening_bal"] = filtered_df.iloc[0]['Balance'] - filtered_df.iloc[0]['Credit'] + filtered_df.iloc[0]['Debit']
@@ -219,10 +219,12 @@ if st.session_state.get('raw_extracted_data') is not None:
         meta_filtered["total_debit_amt"] = filtered_df['Debit'].sum()
         meta_filtered["total_credit_amt"] = filtered_df['Credit'].sum()
     
-    # Send filtered data to the Ledger Mapper bridge
+    # Final filter data memory me save karo Ledger Mapping page ke liye
     st.session_state['cleaned_data'] = filtered_df.copy()
     
-    st.success("✅ Data Ready! Dashboard and Export files are updated according to your Date Filter.")
+    # ------------------ DASHBOARD DISPLAY ------------------
+    st.write("---")
+    st.success("✅ Data Ready! Adjust dates in the left sidebar to filter the dashboard.")
     
     m1, m2, m3, m4 = st.columns(4)
     m1.markdown(f'<div class="metric-card"><b>Opening Bal</b><br>₹ {meta_filtered["opening_bal"]:,.2f}</div>', unsafe_allow_html=True)
