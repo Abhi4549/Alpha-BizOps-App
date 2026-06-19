@@ -32,7 +32,22 @@ st.markdown('<div class="hero-subtitle">100% Accurate Data Extraction | Custom D
 def process_mathematical_parser(file, password=""):
     raw_transactions = []
     try:
-        with pdfplumber.open(file, password=password) as pdf:
+        # ⚡ UPDATED LOCKED PDF HANDLING
+        # Pehle try karenge binary data read karne ka to check password status
+        pdf_bytes = file.read()
+        file.seek(0) # Reset pointer
+        
+        try:
+            # Try opening with password argument (handles both locked and unlocked)
+            pdf_ctx = pdfplumber.open(io.BytesIO(pdf_bytes), password=password if password else None)
+        except Exception as pdf_err:
+            # Agar open hone mein error aaye, matlab locked hai aur password sahi nahi mila
+            if "password" in str(pdf_err).lower() or "encrypted" in str(pdf_err).lower():
+                return None, "PDF is password protected. Please enter a valid password."
+            else:
+                return None, f"PDF Open Error: {str(pdf_err)}"
+
+        with pdf_ctx as pdf:
             # ⚡ UNIVERSAL DATE PATTERN: Covers 12/04/23, 12-Apr-2023, 12.04.2023, etc.
             date_pattern = re.compile(r'^\s*(\d{1,2}[/\-\.](?:[a-zA-Z]{3}|\d{1,2})[/\-\.]\d{2,4})')
 
