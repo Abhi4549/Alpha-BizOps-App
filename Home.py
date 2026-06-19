@@ -267,7 +267,8 @@ if uploaded_file:
             else: 
                 raw_data, status = process_excel_parser(uploaded_file)
             
-            if raw_data:
+            # ⚡ YAHAN FIX HUA HAI THE BUG 'is not None'
+            if raw_data is not None:
                 df = pd.DataFrame(raw_data)
                 df_tally_ready = df[['Date', 'Narration', 'Debit', 'Credit', 'Balance']]
                 st.session_state['raw_extracted_data'] = df_tally_ready.copy()
