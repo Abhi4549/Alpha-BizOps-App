@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import pdfplumber
+import PyPDF2
 import io
 import re
 import datetime
@@ -24,7 +25,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="hero-title">🏦 BANK STATEMENT TO TALLY EXCEL</div>', unsafe_allow_html=True)
-st.markdown('<div class="hero-subtitle">100% Accurate Data Extraction | Smart Auto-Unlock | Ledger Mapper</div>', unsafe_allow_html=True)
+st.markdown('<div class="hero-subtitle">100% Accurate Data Extraction | Smart Auto-Unlock | Universal Format</div>', unsafe_allow_html=True)
 
 # ==========================================
 # 2. SMART PASSWORD ENGINE (INDIAN BANKS)
@@ -60,36 +61,50 @@ def generate_bank_passwords(name, dob, pan, custom_pwd):
     return list(set(passwords)) # Remove duplicates
 
 # ==========================================
-# 3. BACKEND: PDF PARSER WITH AUTO-UNLOCK
+# 3. BACKEND: PDF PARSER WITH PyPDF2 BYPASS
 # ==========================================
 def process_mathematical_parser(file, password_list):
     raw_transactions = []
     pdf_bytes = file.read()
+    file.seek(0)
     
-    # ⚡ AUTO-UNLOCK LOOP: Try all generated passwords
-    pdf_ctx = None
-    unlocked = False
+    unlocked_pdf_stream = None
     
-    # Check if PDF is NOT locked first
+    # ⚡ ENGINE 1: PyPDF2 SECURITY BYPASS (Tala Todna)
     try:
-        pdf_ctx = pdfplumber.open(io.BytesIO(pdf_bytes))
-        unlocked = True
-    except:
-        # If locked, try passwords one by one
-        for pwd in password_list:
-            if not pwd: continue
-            try:
-                pdf_ctx = pdfplumber.open(io.BytesIO(pdf_bytes), password=pwd)
-                unlocked = True
-                break # Password matched!
-            except:
-                continue
-                
-    if not unlocked:
-        return None, "PDF is locked. Auto-Unlock failed. Please provide exact Custom Password / PAN / DOB."
+        temp_stream = io.BytesIO(pdf_bytes)
+        pdf_reader = PyPDF2.PdfReader(temp_stream)
+        
+        if pdf_reader.is_encrypted:
+            unlocked = False
+            for pwd in password_list:
+                if not pwd: continue
+                try:
+                    if pdf_reader.decrypt(pwd): 
+                        unlocked = True
+                        break
+                except: continue
+            
+            if not unlocked:
+                return None, "PDF is locked. Auto-Unlock failed. Please provide exact Password/PAN/DOB."
+            
+            # Create a new decrypted PDF in memory
+            pdf_writer = PyPDF2.PdfWriter()
+            for page in pdf_reader.pages:
+                pdf_writer.add_page(page)
+            
+            unlocked_pdf_stream = io.BytesIO()
+            pdf_writer.write(unlocked_pdf_stream)
+            unlocked_pdf_stream.seek(0)
+        else:
+            unlocked_pdf_stream = io.BytesIO(pdf_bytes)
+            
+    except Exception as e:
+        return None, f"Decryption Engine Error: {str(e)}"
 
+    # ⚡ ENGINE 2: PDFPLUMBER EXTRACTION (Padhna)
     try:
-        with pdf_ctx as pdf:
+        with pdfplumber.open(unlocked_pdf_stream) as pdf:
             date_pattern = re.compile(r'^\s*(\d{1,2}[/\-\.](?:[a-zA-Z]{3}|\d{1,2})[/\-\.]\d{2,4})')
 
             for page in pdf.pages:
@@ -141,7 +156,7 @@ def process_mathematical_parser(file, password_list):
 
                 if current_txn: raw_transactions.append(current_txn)
 
-        # UNIVERSAL MATH LOGIC
+        # UNIVERSAL MATH LOGIC (Debit/Credit Calculation)
         for i in range(len(raw_transactions)):
             curr = raw_transactions[i]
             if i > 0:
@@ -165,10 +180,12 @@ def process_mathematical_parser(file, password_list):
                     curr["Credit"] = curr["Amount"]
 
         return raw_transactions, "Success"
-    except Exception as e: return None, f"PDF Error: {str(e)}"
+    except Exception as e: return None, f"Parsing Error: {str(e)}"
 
+# ==========================================
+# 4. EXCEL CSV PARSER
+# ==========================================
 def process_excel_parser(file):
-    # Excel files are generally not encrypted from banks, bypassing lock logic here for simplicity
     raw_transactions = []
     try:
         if file.name.endswith('.csv'): df = pd.read_csv(file, skip_blank_lines=True)
@@ -226,12 +243,11 @@ def to_excel(df):
     return output.getvalue()
 
 # ==========================================
-# 4. DATA EXTRACTION BLOCK (NEW UI)
+# 5. UI: DATA EXTRACTION BLOCK
 # ==========================================
 uploaded_file = st.file_uploader("Upload Bank Statement (PDF, Excel, CSV)", type=['pdf', 'xlsx', 'xls', 'csv'])
 
 if uploaded_file:
-    # ⚡ NEW SMART UNLOCK UI
     st.markdown("### 🔐 Smart Auto-Unlock (For Locked PDFs)")
     st.info("Enter client details once, and we'll automatically try all combinations (ICICI, SBI, Axis formats).")
     
@@ -242,15 +258,14 @@ if uploaded_file:
     with col4: custom_pwd = st.text_input("Or exact Password/CRN", type="password")
     
     if st.button("🚀 Process & Extract Data", use_container_width=True):
-        with st.spinner("Decoding Document & Generating Magic Passwords..."):
+        with st.spinner("Decoding Document & Extracting Data... please wait"):
             
-            # Generate the list of possible passwords
             passwords_to_try = generate_bank_passwords(client_name, client_dob, client_pan, custom_pwd)
             
             if uploaded_file.name.endswith('.pdf'): 
                 raw_data, status = process_mathematical_parser(uploaded_file, passwords_to_try)
             else: 
-                raw_data, status = process_excel_parser(uploaded_file) # Passing excel without passwords for now
+                raw_data, status = process_excel_parser(uploaded_file)
             
             if raw_data:
                 df = pd.DataFrame(raw_data)
@@ -260,7 +275,7 @@ if uploaded_file:
                 st.error(f"❌ Error: {status}")
 
 # ==========================================
-# 5. MAIN PAGE DATE FILTER & DISPLAY BLOCK
+# 6. UI: DATE FILTER & DASHBOARD
 # ==========================================
 if st.session_state.get('raw_extracted_data') is not None:
     full_df = st.session_state['raw_extracted_data'].copy()
