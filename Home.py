@@ -33,60 +33,97 @@ def process_mathematical_parser(file, password=""):
     raw_transactions = []
     try:
         with pdfplumber.open(file, password=password) as pdf:
-            date_pattern = re.compile(r'^(\d{1,2}[/\-\s][a-zA-Z]{3}[/\-\s]\d{2,4}|\d{1,2}[/\-\s]\d{1,2}[/\-\s]\d{2,4})')
+            # ⚡ UNIVERSAL DATE PATTERN: Covers 12/04/23, 12-Apr-2023, 12.04.2023, etc.
+            date_pattern = re.compile(r'^\s*(\d{1,2}[/\-\.](?:[a-zA-Z]{3}|\d{1,2})[/\-\.]\d{2,4})')
+
             for page in pdf.pages:
                 text = page.extract_text(layout=True)
                 if not text: continue
                 lines = text.split('\n')
+
                 current_txn = None
                 for line in lines:
                     line = line.strip()
                     if not line: continue
+
                     match = date_pattern.search(line)
                     if match:
                         if current_txn: raw_transactions.append(current_txn)
-                        date_str = match.group(1)
-                        rem = line[len(date_str):].strip()
+
+                        # Extract Date and standardize separator to '/'
+                        date_str = match.group(1).replace('.', '/').replace('-', '/')
+                        rem = line[len(match.group(0)):].strip()
+
+                        # Extract Words and Numbers separately
                         parts = rem.split()
-                        amount_list = []
-                        narration_parts = []
-                        for i in range(len(parts)-1, -1, -1):
-                            part = parts[i]
+                        numbers = []
+                        narration_words = []
+
+                        for part in parts:
+                            # Clean special characters from numbers
                             cl_part = part.replace(',', '').replace('Cr', '').replace('Dr', '').replace('cr', '').replace('dr', '').strip()
-                            if re.match(r'^-?\d+(\.\d+)?$', cl_part): amount_list.insert(0, float(cl_part))
+                            
+                            # Check if it's a valid financial amount
+                            if re.match(r'^-?\d+(\.\d+)?$', cl_part):
+                                # Bypass Cheque Numbers (Starts with 0 and has no decimals)
+                                if cl_part.startswith('0') and '.' not in cl_part and len(cl_part) >= 4:
+                                    narration_words.append(part)
+                                else:
+                                    numbers.append(float(cl_part))
                             else:
-                                narration_parts = parts[:i+1]
-                                break
-                        narration = " ".join(narration_parts)
+                                narration_words.append(part)
+
+                        narration = " ".join(narration_words)
+
+                        # ⚡ SMART BALANCE DETECTION
                         balance = 0.0
                         txn_amount = 0.0
-                        if len(amount_list) > 0: balance = amount_list[-1]
-                        if len(amount_list) > 1: txn_amount = amount_list[-2] 
+                        
+                        # The very last number in a bank statement row is ALMOST ALWAYS the Balance
+                        if len(numbers) >= 1: balance = numbers[-1] 
+                        if len(numbers) >= 2: txn_amount = numbers[-2] 
+
                         current_txn = {"Date": date_str, "Narration": narration, "Amount": txn_amount, "Balance": balance, "Debit": 0.0, "Credit": 0.0}
+
                     else:
+                        # ⚡ SMART NARRATION CONTINUATION: For multi-line descriptions
                         if current_txn and len(line) > 2:
-                            ignore = ['page', 'balance', 'total', 'statement', 'branch']
-                            if not any(ig in line.lower() for ig in ignore):
-                                clean_line_parts = [p for p in line.split() if not re.match(r'^-?\d+(\.\d+)?$', p.replace(',',''))]
-                                if clean_line_parts: current_txn["Narration"] += " " + " ".join(clean_line_parts)
+                            ignore_words = ['page', 'balance', 'total', 'statement', 'branch', 'opening', 'closing', 'brought forward']
+                            if not any(ig in line.lower() for ig in ignore_words):
+                                clean_parts = [p for p in line.split() if not re.match(r'^-?\d+(\.\d+)?$', p.replace(',',''))]
+                                if clean_parts: current_txn["Narration"] += " " + " ".join(clean_parts)
+
                 if current_txn: raw_transactions.append(current_txn)
 
+        # ⚡ UNIVERSAL MATH LOGIC: Calculate Debit/Credit using Balance Difference
         for i in range(len(raw_transactions)):
             curr = raw_transactions[i]
-            amt = curr["Amount"]
+
             if i > 0:
                 prev_bal = raw_transactions[i-1]["Balance"]
                 curr_bal = curr["Balance"]
-                if round(prev_bal + amt, 2) == round(curr_bal, 2): curr["Credit"] = amt
-                elif round(prev_bal - amt, 2) == round(curr_bal, 2): curr["Debit"] = amt
+                
+                # Difference between today's balance and yesterday's balance = Exact Transaction Amount
+                diff = round(curr_bal - prev_bal, 2)
+
+                if diff > 0:
+                    curr["Credit"] = diff
+                    curr["Debit"] = 0.0
+                elif diff < 0:
+                    curr["Debit"] = abs(diff)
+                    curr["Credit"] = 0.0
                 else:
-                    diff = round(curr_bal - prev_bal, 2)
-                    if diff > 0: curr["Credit"] = amt
-                    elif diff < 0: curr["Debit"] = amt
+                    # Fallback if balance didn't change (rare)
+                    curr["Credit"] = curr["Amount"] if curr["Amount"] > 0 else 0.0
+
             else:
-                if "RTGS" in curr["Narration"].upper() or "NEFT" in curr["Narration"].upper(): curr["Debit"] = amt 
-                else: curr["Credit"] = amt 
-                    
+                # First transaction guess since no previous balance exists
+                narration_upper = curr["Narration"].upper()
+                if any(kw in narration_upper for kw in ["RTGS", "NEFT", "UPI", "IMPS", "CHQ", "ATM", "WITHDRAW", "DR", "DEBIT"]):
+                    curr["Debit"] = curr["Amount"]
+                else:
+                    curr["Credit"] = curr["Amount"]
+
         return raw_transactions, "Success"
     except Exception as e: return None, f"PDF Error: {str(e)}"
 
