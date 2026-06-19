@@ -32,7 +32,8 @@ st.markdown('<div class="hero-subtitle">100% Accurate Data Extraction | Smart Au
 # ==========================================
 def generate_bank_passwords(name, dob, pan, custom_pwd):
     passwords = []
-    if custom_pwd: passwords.append(custom_pwd.strip())
+    if custom_pwd: 
+        passwords.append(custom_pwd.strip())
     
     if dob:
         d_str = dob.strftime("%d")
@@ -67,7 +68,7 @@ def process_mathematical_parser(file, password_list):
     
     unlocked_pdf_stream = None
     
-    # ⚡ ENGINE 1: PyPDF2 SECURITY BYPASS
+    # ENGINE 1: PyPDF2 SECURITY BYPASS
     try:
         temp_stream = io.BytesIO(pdf_bytes)
         pdf_reader = PyPDF2.PdfReader(temp_stream)
@@ -100,7 +101,7 @@ def process_mathematical_parser(file, password_list):
     except Exception as e:
         return None, f"Decryption Engine Error: {str(e)}"
 
-    # ⚡ ENGINE 2: PDFPLUMBER EXTRACTION WITH GOD-MODE REGEX
+    # ENGINE 2: PDFPLUMBER EXTRACTION WITH GOD-MODE REGEX
     try:
         with pdfplumber.open(unlocked_pdf_stream) as pdf:
             date_pattern = re.compile(r'^\s*(\d{1,2}[\s/\-\.]{1,3}(?:[a-zA-Z]{3,10}|\d{1,2})[\s/\-\.]{1,3}\d{2,4})')
@@ -113,8 +114,8 @@ def process_mathematical_parser(file, password_list):
                     continue
                 
                 lines = text.split('\n')
-
                 current_txn = None
+                
                 for line in lines:
                     line = line.strip()
                     if not line: 
@@ -130,7 +131,6 @@ def process_mathematical_parser(file, password_list):
                         date_str = re.sub(r'/+', '/', date_str)
                         
                         rem = line[len(match.group(0)):].strip()
-
                         parts = rem.split()
                         numbers = []
                         narration_words = []
@@ -146,13 +146,22 @@ def process_mathematical_parser(file, password_list):
                                 narration_words.append(part)
 
                         narration = " ".join(narration_words)
-
                         balance = 0.0
                         txn_amount = 0.0
-                        if len(numbers) >= 1: balance = numbers[-1] 
-                        if len(numbers) >= 2: txn_amount = numbers[-2] 
+                        
+                        if len(numbers) >= 1: 
+                            balance = numbers[-1] 
+                        if len(numbers) >= 2: 
+                            txn_amount = numbers[-2] 
 
-                        current_txn = {"Date": date_str, "Narration": narration, "Amount": txn_amount, "Balance": balance, "Debit": 0.0, "Credit": 0.0}
+                        current_txn = {
+                            "Date": date_str, 
+                            "Narration": narration, 
+                            "Amount": txn_amount, 
+                            "Balance": balance, 
+                            "Debit": 0.0, 
+                            "Credit": 0.0
+                        }
 
                     else:
                         if current_txn and len(line) > 2:
@@ -166,7 +175,7 @@ def process_mathematical_parser(file, password_list):
                     raw_transactions.append(current_txn)
 
         if not raw_transactions:
-            return None, "Document unlocked, but no transactions found. Bank format might be unsupported or it's a scanned photo."
+            return None, "Document unlocked, but no transactions found. Format might be unreadable or a scanned photo."
 
         for i in range(len(raw_transactions)):
             curr = raw_transactions[i]
@@ -195,13 +204,15 @@ def process_mathematical_parser(file, password_list):
         return None, f"Parsing Error: {str(e)}"
 
 # ==========================================
-# 4. EXCEL CSV PARSER
+# 4. EXCEL CSV PARSER (Syntax Error Fixed Here)
 # ==========================================
 def process_excel_parser(file):
     raw_transactions = []
     try:
-        if file.name.endswith('.csv'): df = pd.read_csv(file, skip_blank_lines=True)
-        else: df = pd.read_excel(file)
+        if file.name.endswith('.csv'): 
+            df = pd.read_csv(file, skip_blank_lines=True)
+        else: 
+            df = pd.read_excel(file)
             
         df.dropna(how='all', inplace=True)
         df.dropna(axis=1, how='all', inplace=True)
@@ -220,16 +231,152 @@ def process_excel_parser(file):
             
         df.columns = [str(c).strip().lower() for c in df.columns]
         cols = df.columns
+        
         date_col = next((c for c in cols if 'date' in c), None)
         narration_col = next((c for c in cols if any(x in c for x in ['narration', 'particulars', 'description'])), None)
         debit_col = next((c for c in cols if any(x in c for x in ['debit', 'withdrawal', 'dr'])), None)
         credit_col = next((c for c in cols if any(x in c for x in ['credit', 'deposit', 'cr'])), None)
         balance_col = next((c for c in cols if 'balance' in c), None)
         
-        if not date_col or not narration_col: return None, "Format error: Date/Narration not found."
+        if not date_col or not narration_col: 
+            return None, "Format error: Date/Narration not found."
             
         for _, row in df.iterrows():
             raw_date = row[date_col]
-            if pd.isna(raw_date) or str(raw_date).strip().lower() == 'nan': continue
-            date_val = raw_date.strftime('%d/%m/%Y') if isinstance(raw_date, pd.Timestamp) else str(raw_date).split(' ')[0]
-            narration_val = str(row[narration_col
+            if pd.isna(raw_date) or str(raw_date).strip().lower() == 'nan': 
+                continue
+                
+            if isinstance(raw_date, pd.Timestamp):
+                date_val = raw_date.strftime('%d/%m/%Y')
+            else:
+                date_val = str(raw_date).split(' ')[0]
+            
+            # THE BUG WAS HERE: PROPERLY CLOSED BRACKETS NOW
+            narration_val = str(row[narration_col]).strip()
+            
+            if narration_val.lower() == 'nan': 
+                narration_val = ""
+            
+            def clean_val(v):
+                try: 
+                    clean_str = str(v).replace(',', '').replace('Cr', '').replace('Dr', '').replace('cr', '').replace('dr', '').strip()
+                    return float(clean_str)
+                except Exception: 
+                    return 0.0
+                    
+            debit_val = clean_val(row[debit_col]) if debit_col else 0.0
+            credit_val = clean_val(row[credit_col]) if credit_col else 0.0
+            balance_val = clean_val(row[balance_col]) if balance_col else 0.0
+                
+            raw_transactions.append({
+                "Date": date_val, 
+                "Narration": narration_val, 
+                "Debit": debit_val, 
+                "Credit": credit_val, 
+                "Balance": balance_val
+            })
+            
+        return raw_transactions, "Success"
+    except Exception as e: 
+        return None, f"Excel Error: {str(e)}"
+
+def to_excel(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='TallyData')
+    return output.getvalue()
+
+# ==========================================
+# 5. UI: DATA EXTRACTION BLOCK
+# ==========================================
+uploaded_file = st.file_uploader("Upload Bank Statement (PDF, Excel, CSV)", type=['pdf', 'xlsx', 'xls', 'csv'])
+
+if uploaded_file:
+    st.markdown("### 🔐 Smart Auto-Unlock (For Locked PDFs)")
+    st.info("Enter client details once, and we'll automatically try all combinations (ICICI, SBI, Axis formats).")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    with col1: client_name = st.text_input("First Name (e.g. Rahul)", help="Required for ICICI/Axis")
+    with col2: client_dob = st.date_input("Date of Birth", value=None, help="Required for SBI/ICICI")
+    with col3: client_pan = st.text_input("PAN Number", help="Required for HDFC/Axis")
+    with col4: custom_pwd = st.text_input("Or exact Password/CRN", type="password")
+    
+    if st.button("🚀 Process & Extract Data", use_container_width=True):
+        with st.spinner("Decoding Document & Extracting Data... please wait"):
+            
+            passwords_to_try = generate_bank_passwords(client_name, client_dob, client_pan, custom_pwd)
+            
+            if uploaded_file.name.endswith('.pdf'): 
+                raw_data, status = process_mathematical_parser(uploaded_file, passwords_to_try)
+            else: 
+                raw_data, status = process_excel_parser(uploaded_file)
+            
+            if raw_data is not None:
+                if len(raw_data) > 0:
+                    df = pd.DataFrame(raw_data)
+                    df_tally_ready = df[['Date', 'Narration', 'Debit', 'Credit', 'Balance']]
+                    st.session_state['raw_extracted_data'] = df_tally_ready.copy()
+                else:
+                    st.error("❌ Error: Document unlocked, but no transactions found. Format might be unreadable or a scanned photo.")
+            else:
+                st.error(f"❌ Error: {status}")
+
+# ==========================================
+# 6. UI: DATE FILTER & DASHBOARD
+# ==========================================
+if st.session_state.get('raw_extracted_data') is not None:
+    full_df = st.session_state['raw_extracted_data'].copy()
+    
+    st.write("---")
+    st.markdown("### 📅 Select Specific Dates for Tally")
+    
+    full_df['Date_Obj'] = pd.to_datetime(full_df['Date'], errors='coerce', dayfirst=True)
+    valid_dates = full_df.dropna(subset=['Date_Obj'])
+    
+    if not valid_dates.empty:
+        min_date = valid_dates['Date_Obj'].min().date()
+        max_date = valid_dates['Date_Obj'].max().date()
+    else:
+        min_date = datetime.date(2023, 4, 1)
+        max_date = datetime.date.today()
+        
+    c1, c2 = st.columns(2)
+    with c1: from_date = st.date_input("From Date:", value=min_date)
+    with c2: to_date = st.date_input("To Date:", value=max_date)
+    
+    mask = (full_df['Date_Obj'].dt.date >= from_date) & (full_df['Date_Obj'].dt.date <= to_date)
+    filtered_df = full_df.loc[mask].copy()
+    
+    if filtered_df.empty:
+        st.warning("⚠️ Warning: No transactions found for these dates. Showing all data.")
+        filtered_df = full_df.copy()
+        
+    filtered_df = filtered_df.drop(columns=['Date_Obj'], errors='ignore')
+    
+    meta_filtered = {"opening_bal": 0.0, "closing_bal": 0.0, "debit_count": 0, "credit_count": 0, "total_debit_amt": 0.0, "total_credit_amt": 0.0}
+    if not filtered_df.empty:
+        meta_filtered["opening_bal"] = filtered_df.iloc[0]['Balance'] - filtered_df.iloc[0]['Credit'] + filtered_df.iloc[0]['Debit']
+        meta_filtered["closing_bal"] = filtered_df.iloc[-1]['Balance']
+        meta_filtered["debit_count"] = (filtered_df['Debit'] > 0).sum()
+        meta_filtered["credit_count"] = (filtered_df['Credit'] > 0).sum()
+        meta_filtered["total_debit_amt"] = filtered_df['Debit'].sum()
+        meta_filtered["total_credit_amt"] = filtered_df['Credit'].sum()
+    
+    st.session_state['cleaned_data'] = filtered_df.copy()
+    
+    st.success("✅ Data Ready! The table and exports below are automatically updated.")
+    
+    m1, m2, m3, m4 = st.columns(4)
+    m1.markdown(f'<div class="metric-card"><b>Opening Bal</b><br>₹ {meta_filtered["opening_bal"]:,.2f}</div>', unsafe_allow_html=True)
+    m2.markdown(f'<div class="metric-card"><b>Total Debits (-)</b><br>₹ {meta_filtered["total_debit_amt"]:,.2f}<br><span style="font-size:13px; color:#6B7280;">({meta_filtered["debit_count"]} Txns)</span></div>', unsafe_allow_html=True)
+    m3.markdown(f'<div class="metric-card"><b>Total Credits (+)</b><br>₹ {meta_filtered["total_credit_amt"]:,.2f}<br><span style="font-size:13px; color:#6B7280;">({meta_filtered["credit_count"]} Txns)</span></div>', unsafe_allow_html=True)
+    m4.markdown(f'<div class="metric-card"><b>Closing Bal</b><br>₹ {meta_filtered["closing_bal"]:,.2f}</div>', unsafe_allow_html=True)
+    
+    st.write("<br>", unsafe_allow_html=True)
+    st.write("### 📝 Data Preview")
+        
+    st.dataframe(filtered_df, use_container_width=True) 
+    
+    c1, c2 = st.columns(2)
+    c1.download_button("Download CSV", filtered_df.to_csv(index=False).encode('utf-8'), "alpha_tally_ready.csv", "text/csv", use_container_width=True)
+    c2.download_button("Download Excel (.xlsx)", to_excel(filtered_df), "alpha_tally_ready.xlsx", use_container_width=True)
