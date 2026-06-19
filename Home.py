@@ -80,8 +80,8 @@ def process_mathematical_parser(file, password_list):
                     if not line: continue
                     match = date_pattern.search(line)
                     if match:
-                        if current_txn: raw_transactions.append(current_txn)
-                        date_str = re.sub(r'[\s\.\-]', '/', match.group(1))
+                        raw_date_str = match.group(1)
+                        date_str = re.sub(r'[\s\.\-]', '/', raw_date_str)
                         date_str = re.sub(r'/+', '/', date_str)
                         rem = line[len(match.group(0)):].strip()
                         parts = rem.split()
@@ -92,9 +92,19 @@ def process_mathematical_parser(file, password_list):
                                 if cl_part.startswith('0') and '.' not in cl_part and len(cl_part) >= 4: narration_words.append(part)
                                 else: numbers.append(float(cl_part))
                             else: narration_words.append(part)
-                        balance = numbers[-1] if len(numbers) >= 1 else 0.0
-                        txn_amount = numbers[-2] if len(numbers) >= 2 else 0.0
-                        current_txn = {"Date": date_str, "Narration": " ".join(narration_words), "Amount": txn_amount, "Balance": balance, "Debit": 0.0, "Credit": 0.0}
+                        
+                        # ⚡ STRICT FILTER: Faltu Meta-Data Lines Drop Karne Ke Liye Keywords
+                        line_lower = line.lower()
+                        ignore_kws = ['opening balance', 'closing balance', 'brought forward', 'carried forward', 
+                                      'total debits', 'total credits', 'statement period', 'generated on', 
+                                      'page total', 'grand total', 'summary of', 'authorized sign', 'stamp']
+                        
+                        # Sirf tabhi transaction maano jab line me numbers ho aur junk keywords NA ho
+                        if len(numbers) >= 1 and not any(kw in line_lower for kw in ignore_kws):
+                            if current_txn: raw_transactions.append(current_txn)
+                            balance = numbers[-1]
+                            txn_amount = numbers[-2] if len(numbers) >= 2 else 0.0
+                            current_txn = {"Date": date_str, "Narration": " ".join(narration_words), "Amount": txn_amount, "Balance": balance, "Debit": 0.0, "Credit": 0.0}
                     else:
                         if current_txn and len(line) > 2:
                             if not any(ig in line.lower() for ig in ['page', 'balance', 'total', 'statement', 'branch', 'opening', 'closing', 'brought forward']):
@@ -102,7 +112,7 @@ def process_mathematical_parser(file, password_list):
                                 if clean_parts: current_txn["Narration"] += " " + " ".join(clean_parts)
                 if current_txn: raw_transactions.append(current_txn)
 
-        if not raw_transactions: return None, "No transactions found. Format might be unreadable or a scanned photo."
+        if not raw_transactions: return None, "No transactions found. Format might be unreadable."
 
         for i in range(len(raw_transactions)):
             curr = raw_transactions[i]
@@ -150,21 +160,28 @@ def process_excel_parser(file):
         for _, row in df.iterrows():
             raw_date = row[date_col]
             if pd.isna(raw_date) or str(raw_date).strip().lower() == 'nan': continue
-            date_val = raw_date.strftime('%d/%m/%Y') if isinstance(raw_date, pd.Timestamp) else str(raw_date).split(' ')[0]
+            
+            # ⚡ EXCEL JUNK ROW FILTER: Summary ya Empty rows drop karne ke liye
             narration_val = str(row[narration_col]).strip()
+            if any(kw in narration_val.lower() for kw in ['total', 'opening balance', 'closing balance', 'brought forward']): continue
+            
+            date_val = raw_date.strftime('%d/%m/%Y') if isinstance(raw_date, pd.Timestamp) else str(raw_date).split(' ')[0]
             if narration_val.lower() == 'nan': narration_val = ""
             
             def clean_val(v):
                 try: return float(str(v).replace(',', '').replace('Cr', '').replace('Dr', '').replace('cr', '').replace('dr', '').strip())
                 except Exception: return 0.0
-                    
-            raw_transactions.append({
-                "Date": date_val, 
-                "Narration": narration_val, 
-                "Debit": clean_val(row[debit_col]) if debit_col else 0.0, 
-                "Credit": clean_val(row[credit_col]) if credit_col else 0.0, 
-                "Balance": clean_val(row[balance_col]) if balance_col else 0.0
-            })
+            
+            debit_val = clean_val(row[debit_col]) if debit_col else 0.0
+            credit_val = clean_val(row[credit_col]) if credit_col else 0.0
+            balance_val = clean_val(row[balance_col]) if balance_col else 0.0
+            
+            # Sirf tabhi add karo jab transaction me financial logic ho
+            if debit_val > 0 or credit_val > 0 or balance_val > 0:
+                raw_transactions.append({
+                    "Date": date_val, "Narration": narration_val, 
+                    "Debit": debit_val, "Credit": credit_val, "Balance": balance_val
+                })
         return raw_transactions, "Success"
     except Exception as e: return None, f"Excel Error: {str(e)}"
 
@@ -195,7 +212,7 @@ if uploaded_file:
                 if len(raw_data) > 0:
                     df = pd.DataFrame(raw_data)
                     st.session_state['raw_extracted_data'] = df[['Date', 'Narration', 'Debit', 'Credit', 'Balance']].copy()
-                else: st.error("❌ Error: Document unlocked, but no transactions found. Format might be unreadable.")
+                else: st.error("❌ Error: Document unlocked, but no actual transactions found.")
             else: st.error(f"❌ Error: {status}")
 
 if st.session_state.get('raw_extracted_data') is not None:
@@ -229,7 +246,7 @@ if st.session_state.get('raw_extracted_data') is not None:
         meta_filtered["total_credit_amt"] = filtered_df['Credit'].sum()
     
     st.session_state['cleaned_data'] = filtered_df.copy()
-    st.success("✅ Data Ready! The table and exports below are automatically updated.")
+    st.success("✅ Data Ready! Noise and junk lines filtered successfully.")
     
     m1, m2, m3, m4 = st.columns(4)
     m1.markdown(f'<div class="metric-card"><b>Opening Bal</b><br>₹ {meta_filtered["opening_bal"]:,.2f}</div>', unsafe_allow_html=True)
@@ -238,7 +255,7 @@ if st.session_state.get('raw_extracted_data') is not None:
     m4.markdown(f'<div class="metric-card"><b>Closing Bal</b><br>₹ {meta_filtered["closing_bal"]:,.2f}</div>', unsafe_allow_html=True)
     
     st.write("<br>", unsafe_allow_html=True)
-    st.write("### 📝 Data Preview")
+    st.write("### 📝 Data Preview (Clean Transactions Only)")
     st.dataframe(filtered_df, use_container_width=True) 
     
     c1, c2 = st.columns(2)
