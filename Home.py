@@ -55,7 +55,7 @@ def generate_bank_passwords(name, dob, pan, custom_pwd):
     if pan:
         passwords.extend([pan.lower().strip(), pan.upper().strip()])
         
-    return list(set(passwords)) 
+    return list(set(passwords))
 
 # ==========================================
 # 3. BACKEND: PDF PARSER WITH PyPDF2 BYPASS
@@ -67,7 +67,7 @@ def process_mathematical_parser(file, password_list):
     
     unlocked_pdf_stream = None
     
-    # ENGINE 1: PyPDF2 SECURITY BYPASS
+    # ⚡ ENGINE 1: PyPDF2 SECURITY BYPASS
     try:
         temp_stream = io.BytesIO(pdf_bytes)
         pdf_reader = PyPDF2.PdfReader(temp_stream)
@@ -75,12 +75,14 @@ def process_mathematical_parser(file, password_list):
         if pdf_reader.is_encrypted:
             unlocked = False
             for pwd in password_list:
-                if not pwd: continue
+                if not pwd: 
+                    continue
                 try:
                     if pdf_reader.decrypt(pwd): 
                         unlocked = True
                         break
-                except: continue
+                except Exception:
+                    continue
             
             if not unlocked:
                 return None, "PDF is locked. Auto-Unlock failed. Please provide exact Password/PAN/DOB."
@@ -89,4 +91,145 @@ def process_mathematical_parser(file, password_list):
             for page in pdf_reader.pages:
                 pdf_writer.add_page(page)
             
-            un
+            unlocked_pdf_stream = io.BytesIO()
+            pdf_writer.write(unlocked_pdf_stream)
+            unlocked_pdf_stream.seek(0)
+        else:
+            unlocked_pdf_stream = io.BytesIO(pdf_bytes)
+            
+    except Exception as e:
+        return None, f"Decryption Engine Error: {str(e)}"
+
+    # ⚡ ENGINE 2: PDFPLUMBER EXTRACTION WITH GOD-MODE REGEX
+    try:
+        with pdfplumber.open(unlocked_pdf_stream) as pdf:
+            date_pattern = re.compile(r'^\s*(\d{1,2}[\s/\-\.]{1,3}(?:[a-zA-Z]{3,10}|\d{1,2})[\s/\-\.]{1,3}\d{2,4})')
+
+            for page in pdf.pages:
+                text = page.extract_text(layout=True)
+                if not text: 
+                    text = page.extract_text()
+                if not text: 
+                    continue
+                
+                lines = text.split('\n')
+
+                current_txn = None
+                for line in lines:
+                    line = line.strip()
+                    if not line: 
+                        continue
+
+                    match = date_pattern.search(line)
+                    if match:
+                        if current_txn: 
+                            raw_transactions.append(current_txn)
+
+                        raw_date_str = match.group(1)
+                        date_str = re.sub(r'[\s\.\-]', '/', raw_date_str)
+                        date_str = re.sub(r'/+', '/', date_str)
+                        
+                        rem = line[len(match.group(0)):].strip()
+
+                        parts = rem.split()
+                        numbers = []
+                        narration_words = []
+
+                        for part in parts:
+                            cl_part = part.replace(',', '').replace('Cr', '').replace('Dr', '').replace('cr', '').replace('dr', '').strip()
+                            if re.match(r'^-?\d+(\.\d+)?$', cl_part):
+                                if cl_part.startswith('0') and '.' not in cl_part and len(cl_part) >= 4:
+                                    narration_words.append(part)
+                                else:
+                                    numbers.append(float(cl_part))
+                            else:
+                                narration_words.append(part)
+
+                        narration = " ".join(narration_words)
+
+                        balance = 0.0
+                        txn_amount = 0.0
+                        if len(numbers) >= 1: balance = numbers[-1] 
+                        if len(numbers) >= 2: txn_amount = numbers[-2] 
+
+                        current_txn = {"Date": date_str, "Narration": narration, "Amount": txn_amount, "Balance": balance, "Debit": 0.0, "Credit": 0.0}
+
+                    else:
+                        if current_txn and len(line) > 2:
+                            ignore_words = ['page', 'balance', 'total', 'statement', 'branch', 'opening', 'closing', 'brought forward']
+                            if not any(ig in line.lower() for ig in ignore_words):
+                                clean_parts = [p for p in line.split() if not re.match(r'^-?\d+(\.\d+)?$', p.replace(',',''))]
+                                if clean_parts: 
+                                    current_txn["Narration"] += " " + " ".join(clean_parts)
+
+                if current_txn: 
+                    raw_transactions.append(current_txn)
+
+        if not raw_transactions:
+            return None, "Document unlocked, but no transactions found. Bank format might be unsupported or it's a scanned photo."
+
+        for i in range(len(raw_transactions)):
+            curr = raw_transactions[i]
+            if i > 0:
+                prev_bal = raw_transactions[i-1]["Balance"]
+                curr_bal = curr["Balance"]
+                diff = round(curr_bal - prev_bal, 2)
+
+                if diff > 0:
+                    curr["Credit"] = diff
+                    curr["Debit"] = 0.0
+                elif diff < 0:
+                    curr["Debit"] = abs(diff)
+                    curr["Credit"] = 0.0
+                else:
+                    curr["Credit"] = curr["Amount"] if curr["Amount"] > 0 else 0.0
+            else:
+                narration_upper = curr["Narration"].upper()
+                if any(kw in narration_upper for kw in ["RTGS", "NEFT", "UPI", "IMPS", "CHQ", "ATM", "WITHDRAW", "DR", "DEBIT"]):
+                    curr["Debit"] = curr["Amount"]
+                else:
+                    curr["Credit"] = curr["Amount"]
+
+        return raw_transactions, "Success"
+    except Exception as e: 
+        return None, f"Parsing Error: {str(e)}"
+
+# ==========================================
+# 4. EXCEL CSV PARSER
+# ==========================================
+def process_excel_parser(file):
+    raw_transactions = []
+    try:
+        if file.name.endswith('.csv'): df = pd.read_csv(file, skip_blank_lines=True)
+        else: df = pd.read_excel(file)
+            
+        df.dropna(how='all', inplace=True)
+        df.dropna(axis=1, how='all', inplace=True)
+        df = df.reset_index(drop=True)
+        
+        header_idx = -1
+        for i in range(min(20, len(df))):
+            row_str = ' '.join(str(x).lower() for x in df.iloc[i].values)
+            if 'date' in row_str and ('narration' in row_str or 'particulars' in row_str or 'description' in row_str):
+                header_idx = i
+                break
+                
+        if header_idx != -1:
+            df.columns = df.iloc[header_idx]
+            df = df.iloc[header_idx+1:].reset_index(drop=True)
+            
+        df.columns = [str(c).strip().lower() for c in df.columns]
+        cols = df.columns
+        date_col = next((c for c in cols if 'date' in c), None)
+        narration_col = next((c for c in cols if any(x in c for x in ['narration', 'particulars', 'description'])), None)
+        debit_col = next((c for c in cols if any(x in c for x in ['debit', 'withdrawal', 'dr'])), None)
+        credit_col = next((c for c in cols if any(x in c for x in ['credit', 'deposit', 'cr'])), None)
+        balance_col = next((c for c in cols if 'balance' in c), None)
+        
+        if not date_col or not narration_col: return None, "Format error: Date/Narration not found."
+            
+        for _, row in df.iterrows():
+            raw_date = row[date_col]
+            if pd.isna(raw_date) or str(raw_date).strip().lower() == 'nan': continue
+            date_val = raw_date.strftime('%d/%m/%Y') if isinstance(raw_date, pd.Timestamp) else str(raw_date).split(' ')[0]
+            narration_val = str(row[narration_col
