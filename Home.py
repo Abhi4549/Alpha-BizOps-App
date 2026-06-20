@@ -267,11 +267,14 @@ if uploaded_file:
             else: 
                 raw_data, status = process_excel_parser(uploaded_file)
             
-            # ⚡ YAHAN FIX HUA HAI THE BUG 'is not None'
+            # ⚡ KEYERROR FIX APPLIED HERE
             if raw_data is not None:
-                df = pd.DataFrame(raw_data)
-                df_tally_ready = df[['Date', 'Narration', 'Debit', 'Credit', 'Balance']]
-                st.session_state['raw_extracted_data'] = df_tally_ready.copy()
+                if len(raw_data) > 0:
+                    df = pd.DataFrame(raw_data)
+                    df_tally_ready = df[['Date', 'Narration', 'Debit', 'Credit', 'Balance']]
+                    st.session_state['raw_extracted_data'] = df_tally_ready.copy()
+                else:
+                    st.error("❌ Error: Document unlocked, but no transactions found. The PDF format might be unreadable.")
             else:
                 st.error(f"❌ Error: {status}")
 
