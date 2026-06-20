@@ -69,12 +69,12 @@ def process_mathematical_parser(file, password_list):
     try:
         with pdfplumber.open(unlocked_pdf_stream) as pdf:
             date_pattern = re.compile(r'(\d{1,2}[\s/\-\.]{1,3}(?:[a-zA-Z]{3,10}|\d{1,2})[\s/\-\.]{1,3}\d{2,4})')
+            current_txn = None # ⚡ FIXED FOR LARGE PDFS: Moved outside page loop to prevent line breaks across pages
             for page in pdf.pages:
                 text = page.extract_text(layout=True)
                 if not text: text = page.extract_text()
                 if not text: continue
                 lines = text.split('\n')
-                current_txn = None
                 for line in lines:
                     line = line.strip()
                     if not line: continue
@@ -93,13 +93,11 @@ def process_mathematical_parser(file, password_list):
                                 else: numbers.append(float(cl_part))
                             else: narration_words.append(part)
                         
-                        # ⚡ STRICT FILTER: Faltu Meta-Data Lines Drop Karne Ke Liye Keywords
                         line_lower = line.lower()
                         ignore_kws = ['opening balance', 'closing balance', 'brought forward', 'carried forward', 
                                       'total debits', 'total credits', 'statement period', 'generated on', 
                                       'page total', 'grand total', 'summary of', 'authorized sign', 'stamp']
                         
-                        # Sirf tabhi transaction maano jab line me numbers ho aur junk keywords NA ho
                         if len(numbers) >= 1 and not any(kw in line_lower for kw in ignore_kws):
                             if current_txn: raw_transactions.append(current_txn)
                             balance = numbers[-1]
@@ -114,13 +112,28 @@ def process_mathematical_parser(file, password_list):
 
         if not raw_transactions: return None, "No transactions found. Format might be unreadable."
 
+        # ⚡ FIXED FOR LARGE PDFS: Auto-Correcting Self-Healing Ledger Loop
         for i in range(len(raw_transactions)):
             curr = raw_transactions[i]
             if i > 0:
-                diff = round(curr["Balance"] - raw_transactions[i-1]["Balance"], 2)
-                if diff > 0: curr["Credit"], curr["Debit"] = diff, 0.0
-                elif diff < 0: curr["Debit"], curr["Credit"] = abs(diff), 0.0
-                else: curr["Credit"] = curr["Amount"] if curr["Amount"] > 0 else 0.0
+                prev_bal = raw_transactions[i-1]["Balance"]
+                curr_bal = curr["Balance"]
+                diff = round(curr_bal - prev_bal, 2)
+                
+                # Check validation between running math and amount
+                if abs(diff) == round(curr["Amount"], 2) or curr["Amount"] == 0.0:
+                    if diff > 0: curr["Credit"], curr["Debit"] = diff, 0.0
+                    elif diff < 0: curr["Debit"], curr["Credit"] = abs(diff), 0.0
+                    else: curr["Credit"] = curr["Amount"] if curr["Amount"] > 0 else 0.0
+                else:
+                    # Self-Healing Block: Fallback on explicit amount & keywords when layout shifts on large files
+                    narration_upper = curr["Narration"].upper()
+                    if any(kw in narration_upper for kw in ["RTGS", "NEFT", "UPI", "IMPS", "CHQ", "ATM", "WITHDRAW", "DR", "DEBIT", "CHARGES", "FEE"]):
+                        curr["Debit"], curr["Credit"] = curr["Amount"], 0.0
+                        curr["Balance"] = round(prev_bal - curr["Amount"], 2) # Auto-adjust balance state for the next row
+                    else:
+                        curr["Credit"], curr["Debit"] = curr["Amount"], 0.0
+                        curr["Balance"] = round(prev_bal + curr["Amount"], 2) # Auto-adjust balance state for the next row
             else:
                 if any(kw in curr["Narration"].upper() for kw in ["RTGS", "NEFT", "UPI", "IMPS", "CHQ", "ATM", "WITHDRAW", "DR", "DEBIT"]): curr["Debit"] = curr["Amount"]
                 else: curr["Credit"] = curr["Amount"]
@@ -161,7 +174,6 @@ def process_excel_parser(file):
             raw_date = row[date_col]
             if pd.isna(raw_date) or str(raw_date).strip().lower() == 'nan': continue
             
-            # ⚡ EXCEL JUNK ROW FILTER: Summary ya Empty rows drop karne ke liye
             narration_val = str(row[narration_col]).strip()
             if any(kw in narration_val.lower() for kw in ['total', 'opening balance', 'closing balance', 'brought forward']): continue
             
@@ -176,7 +188,6 @@ def process_excel_parser(file):
             credit_val = clean_val(row[credit_col]) if credit_col else 0.0
             balance_val = clean_val(row[balance_col]) if balance_col else 0.0
             
-            # Sirf tabhi add karo jab transaction me financial logic ho
             if debit_val > 0 or credit_val > 0 or balance_val > 0:
                 raw_transactions.append({
                     "Date": date_val, "Narration": narration_val, 
