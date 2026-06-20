@@ -26,69 +26,63 @@ st.markdown('<div class="hero-subtitle">100% Accurate Data Extraction | Smart Au
 
 def generate_bank_passwords(name, dob, pan, custom_pwd):
     passwords = []
-    if custom_pwd: passwords.append(custom_pwd.strip())
+    if custom_pwd: 
+        passwords.append(custom_pwd.strip())
     if dob:
-        d_str, m_str, y_full, y_short = dob.strftime("%d"), dob.strftime("%m"), dob.strftime("%Y"), dob.strftime("%y")
+        d_str = dob.strftime("%d")
+        m_str = dob.strftime("%m")
+        y_full = dob.strftime("%Y")
+        y_short = dob.strftime("%y")
         passwords.extend([f"{d_str}{m_str}{y_full}", f"{d_str}{m_str}{y_short}"])
         if name:
             name_clean = re.sub(r'[^a-zA-Z]', '', name)
             if len(name_clean) >= 4:
-                f4l, f4u = name_clean[:4].lower(), name_clean[:4].upper()
+                f4l = name_clean[:4].lower()
+                f4u = name_clean[:4].upper()
                 passwords.extend([f"{f4l}{d_str}{m_str}", f"{f4u}{d_str}{m_str}", f"{f4l}{d_str}{m_str}{y_full}"])
-    if pan: passwords.extend([pan.lower().strip(), pan.upper().strip()])
+    if pan: 
+        passwords.extend([pan.lower().strip(), pan.upper().strip()])
     return list(set(passwords))
 
 def process_mathematical_parser(file, password_list):
     raw_transactions = []
     pdf_bytes = file.read()
     file.seek(0)
-    unlocked_pdf_stream = None
     
     try:
         temp_stream = io.BytesIO(pdf_bytes)
         pdf_reader = PyPDF2.PdfReader(temp_stream)
-        if pdf_reader.is_encrypted:
-            unlocked = False
+        
+        is_encrypted = pdf_reader.is_encrypted
+        matched_password = None
+        
+        if is_encrypted:
             for pwd in password_list:
                 if pwd:
                     try:
                         if pdf_reader.decrypt(pwd):
-                            unlocked = True
+                            matched_password = pwd
                             break
-                    except Exception: pass
-            if not unlocked: return None, "PDF is locked. Auto-Unlock failed."
-            pdf_writer = PyPDF2.PdfWriter()
-            for page in pdf_reader.pages: pdf_writer.add_page(page)
-            unlocked_pdf_stream = io.BytesIO()
-            pdf_writer.write(unlocked_pdf_stream)
-            unlocked_pdf_stream.seek(0)
-        else:
-            unlocked_pdf_stream = io.BytesIO(pdf_bytes)
-    except Exception as e: return None, f"Decryption Engine Error: {str(e)}"
+                    except Exception: 
+                        pass
+            if not matched_password: 
+                return None, "PDF is locked. Auto-Unlock failed."
+            
+    except Exception as e: 
+        return None, f"Decryption Engine Error: {str(e)}"
 
     try:
-        with pdfplumber.open(unlocked_pdf_stream) as pdf:
+        pdf_file_object = io.BytesIO(pdf_bytes)
+        
+        with pdfplumber.open(pdf_file_object, password=matched_password) as pdf:
             date_pattern = re.compile(r'(\d{1,2}[\s/\-\.]{1,3}(?:[a-zA-Z]{3,10}|\d{1,2})[\s/\-\.]{1,3}\d{2,4})')
             
-            # ⚡ UPGRADE 1: Memory Stream Logic (Moved outside page loop to handle page-breaks smoothly)
-            current_txn = None 
+            ignore_kws = [
+                'opening balance', 'closing balance', 'brought forward', 'carried forward', 
+                'total debits', 'total credits', 'statement period', 'generated on', 
+                'page total', 'grand total', 'summary of', 'authorized sign', 'stamp'
+            ]
             
-            for page in pdf.pages:
-                text = page.extract_text(layout=True)
-                if not text: text = page.extract_text()
-                if not text: continue
-                lines = text.split('\n')
-                
-                for line in lines:
-                    line = line.strip()
-                    if not line: continue
-                    match = date_pattern.search(line)
-                    if match:
-                        raw_date_str = match.group(1)
-                        date_str = re.sub(r'[\s\.\-]', '/', raw_date_str)
-                        date_str = re.sub(r'/+', '/', date_str)
-                        rem = line[len(match.group(0)):].strip()
-                        parts = rem.split()
-                        numbers, narration_words = [], []
-                        for part in parts:
-                            cl_part = part.replace(',', '').replace('Cr', '').replace('Dr', '').replace('cr', '').
+            current_txn = None
+            
+            for page_num
