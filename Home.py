@@ -65,7 +65,7 @@ def process_mathematical_parser(file, password_list):
     pdf_bytes = file.read()
     file.seek(0)
     
-    matched_password = None
+    matched_password = ""
     
     # ⚡ ENGINE 1: PyPDF2 ONLY TO FIND PASSWORD
     try:
@@ -90,11 +90,14 @@ def process_mathematical_parser(file, password_list):
     except Exception as e:
         return None, f"Decryption Engine Error: {str(e)}"
 
-    # ⚡ ENGINE 2: PDFPLUMBER EXTRACTION (YOUR EXACT ORIGINAL LOGIC)
+    # ⚡ ENGINE 2: PDFPLUMBER EXTRACTION (YOUR EXACT ORIGINAL LOGIC + REGEX FIX)
     try:
         original_pdf_stream = io.BytesIO(pdf_bytes)
         with pdfplumber.open(original_pdf_stream, password=matched_password) as pdf:
-            date_pattern = re.compile(r'^\s*(\d{1,2}[\s/\-\.]{1,3}(?:[a-zA-Z]{3,10}|\d{1,2})[\s/\-\.]{1,3}\d{2,4})')
+            
+            # 🔥 FIX: Removed ^\s* so it catches dates ANYWHERE in the line
+            regex_str = r'(\d{1,2}[\s/\-\.]{1,3}(?:[a-zA-Z]{3,10}|\d{1,2})[\s/\-\.]{1,3}\d{2,4})'
+            date_pattern = re.compile(regex_str)
 
             for page in pdf.pages:
                 text = page.extract_text(layout=True)
