@@ -4,4 +4,4 @@ pdfplumber
 PyPDF2
 openpyxl
 msoffcrypto-tool
-pikepdf
+
