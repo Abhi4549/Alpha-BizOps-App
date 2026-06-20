@@ -65,9 +65,9 @@ def process_mathematical_parser(file, password_list):
     pdf_bytes = file.read()
     file.seek(0)
     
-    matched_password = ""
+    unlocked_pdf_stream = None
     
-    # ⚡ ENGINE 1: PyPDF2 ONLY TO FIND PASSWORD
+    # ⚡ ENGINE 1: PyPDF2 SECURITY BYPASS (Restored to your original)
     try:
         temp_stream = io.BytesIO(pdf_bytes)
         pdf_reader = PyPDF2.PdfReader(temp_stream)
@@ -80,24 +80,30 @@ def process_mathematical_parser(file, password_list):
                 try:
                     if pdf_reader.decrypt(pwd): 
                         unlocked = True
-                        matched_password = pwd
                         break
                 except Exception:
                     continue
             
             if not unlocked:
                 return None, "PDF is locked. Auto-Unlock failed. Please provide exact Password/PAN/DOB."
+            
+            pdf_writer = PyPDF2.PdfWriter()
+            for page in pdf_reader.pages:
+                pdf_writer.add_page(page)
+            
+            unlocked_pdf_stream = io.BytesIO()
+            pdf_writer.write(unlocked_pdf_stream)
+            unlocked_pdf_stream.seek(0)
+        else:
+            unlocked_pdf_stream = io.BytesIO(pdf_bytes)
+            
     except Exception as e:
         return None, f"Decryption Engine Error: {str(e)}"
 
-    # ⚡ ENGINE 2: PDFPLUMBER EXTRACTION (YOUR EXACT ORIGINAL LOGIC + REGEX FIX)
+    # ⚡ ENGINE 2: PDFPLUMBER EXTRACTION WITH GOD-MODE REGEX
     try:
-        original_pdf_stream = io.BytesIO(pdf_bytes)
-        with pdfplumber.open(original_pdf_stream, password=matched_password) as pdf:
-            
-            # 🔥 FIX: Removed ^\s* so it catches dates ANYWHERE in the line
-            regex_str = r'(\d{1,2}[\s/\-\.]{1,3}(?:[a-zA-Z]{3,10}|\d{1,2})[\s/\-\.]{1,3}\d{2,4})'
-            date_pattern = re.compile(regex_str)
+        with pdfplumber.open(unlocked_pdf_stream) as pdf:
+            date_pattern = re.compile(r'^\s*(\d{1,2}[\s/\-\.]{1,3}(?:[a-zA-Z]{3,10}|\d{1,2})[\s/\-\.]{1,3}\d{2,4})')
 
             for page in pdf.pages:
                 text = page.extract_text(layout=True)
@@ -317,7 +323,9 @@ if st.session_state.get('raw_extracted_data') is not None:
     
     meta_filtered = {"opening_bal": 0.0, "closing_bal": 0.0, "debit_count": 0, "credit_count": 0, "total_debit_amt": 0.0, "total_credit_amt": 0.0}
     if not filtered_df.empty:
-        meta_filtered["opening_bal"] = filtered_df.iloc[0]['Balance'] - filtered_df.iloc[0]['Credit'] + filtered_df.iloc[0]['Debit']
+        # Line broken into variables to prevent Streamlit editor truncation crash
+        first_row = filtered_df.iloc[0]
+        meta_filtered["opening_bal"] = first_row['Balance'] - first_row['Credit'] + first_row['Debit']
         meta_filtered["closing_bal"] = filtered_df.iloc[-1]['Balance']
         meta_filtered["debit_count"] = (filtered_df['Debit'] > 0).sum()
         meta_filtered["credit_count"] = (filtered_df['Credit'] > 0).sum()
@@ -340,5 +348,10 @@ if st.session_state.get('raw_extracted_data') is not None:
     st.dataframe(filtered_df, use_container_width=True) 
     
     c1, c2 = st.columns(2)
-    c1.download_button("Download CSV", filtered_df.to_csv(index=False).encode('utf-8'), "alpha_tally_ready.csv", "text/csv", use_container_width=True)
-    c2.download_button("Download Excel (.xlsx)", to_excel(filtered_df), "alpha_tally_ready.xlsx", use_container_width=True)
+    
+    # Download lines broken down to prevent truncation
+    csv_bytes = filtered_df.to_csv(index=False).encode('utf-8')
+    c1.download_button("Download CSV", csv_bytes, "alpha_tally_ready.csv", "text/csv", use_container_width=True)
+    
+    excel_bytes = to_excel(filtered_df)
+    c2.download_button("Download Excel (.xlsx)", excel_bytes, "alpha_tally_ready.xlsx", use_container_width=True)
