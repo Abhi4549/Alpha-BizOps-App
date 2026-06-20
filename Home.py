@@ -58,45 +58,78 @@ def generate_bank_passwords(name, dob, pan, custom_pwd):
     return list(set(passwords))
 
 # ==========================================
-# 3. BACKEND: PDF PARSER WITH PyPDF2 BYPASS
+# 3. BACKEND: PDF PARSER WITH DUAL-ENGINE BYPASS
 # ==========================================
 def process_mathematical_parser(file, password_list):
     raw_transactions = []
     pdf_bytes = file.read()
     file.seek(0)
     
+    unlocked_pdf_stream = None
     matched_pwd = None
-    is_locked = False
+    unlocked = False
     
-    # Check if natively unlocked
+    # ⚡ DUAL-ENGINE UNLOCKER FOR ZIDDI PDFs
     try:
-        with pdfplumber.open(io.BytesIO(pdf_bytes)) as test_pdf:
-            pass
-    except Exception:
-        is_locked = True
-        
-    # PyPDF2 Unlock Engine
-    if is_locked:
-        unlocked = False
-        for pwd in password_list:
-            if not pwd: continue
+        # Check if natively unlocked
+        try:
+            with pdfplumber.open(io.BytesIO(pdf_bytes)) as test_pdf:
+                pass
+            unlocked_pdf_stream = io.BytesIO(pdf_bytes)
+            unlocked = True
+        except Exception:
+            pass # PDF is locked
+
+        if not unlocked:
+            # Engine 1: Native PDFPlumber Unlock (Best for preserving layout)
+            for pwd in password_list:
+                if not pwd: continue
+                try:
+                    with pdfplumber.open(io.BytesIO(pdf_bytes), password=pwd) as test_pdf:
+                        pass
+                    unlocked_pdf_stream = io.BytesIO(pdf_bytes)
+                    matched_pwd = pwd
+                    unlocked = True
+                    break
+                except Exception:
+                    continue
+
+        if not unlocked:
+            # Engine 2: PyPDF2 Maha-astra Bypass (For heavily encrypted AES-256 PDFs)
             try:
-                with pdfplumber.open(io.BytesIO(pdf_bytes), password=pwd) as test_pdf:
-                    pass
-                unlocked = True
-                matched_pwd = pwd
-                break
-            except Exception:
-                continue
+                temp_stream = io.BytesIO(pdf_bytes)
+                pdf_reader = PyPDF2.PdfReader(temp_stream)
                 
+                if pdf_reader.is_encrypted:
+                    for pwd in password_list:
+                        if not pwd: continue
+                        try:
+                            if pdf_reader.decrypt(pwd):
+                                pdf_writer = PyPDF2.PdfWriter()
+                                for page in pdf_reader.pages:
+                                    pdf_writer.add_page(page)
+                                
+                                unlocked_pdf_stream = io.BytesIO()
+                                pdf_writer.write(unlocked_pdf_stream)
+                                unlocked_pdf_stream.seek(0)
+                                unlocked = True
+                                matched_pwd = None # Because we wrote an unlocked copy
+                                break
+                        except Exception:
+                            continue
+            except Exception as e:
+                return None, f"Decryption Engine Error: {str(e)}"
+
         if not unlocked:
             return None, "PDF is locked. Auto-Unlock failed. Please provide exact Password/PAN/DOB."
 
+    except Exception as e:
+        return None, f"Initial Processing Error: {str(e)}"
+
+    # ⚡ ENGINE 3: PDFPLUMBER EXTRACTION WITH YOUR EXACT LOGIC
     try:
-        pdf_mem = io.BytesIO(pdf_bytes)
-        with pdfplumber.open(pdf_mem, password=matched_pwd) as pdf:
+        with pdfplumber.open(unlocked_pdf_stream, password=matched_pwd) as pdf:
             
-            # Catch dates ANYWHERE in the line
             dt_regex = r'(\d{1,2}[\s/\-\.]{1,3}(?:[a-zA-Z]{3,10}|\d{1,2})[\s/\-\.]{1,3}\d{2,4})'
             date_pattern = re.compile(dt_regex)
 
@@ -328,7 +361,6 @@ if st.session_state.get('raw_extracted_data') is not None:
     
     st.success("✅ Data Ready! The table and exports below are automatically updated.")
     
-    # ⚡ FIX: F-strings removed from HTML concatenation to prevent syntax wrap error
     v_op = "{:,.2f}".format(meta_filtered["opening_bal"])
     v_dr = "{:,.2f}".format(meta_filtered["total_debit_amt"])
     v_cr = "{:,.2f}".format(meta_filtered["total_credit_amt"])
