@@ -6,6 +6,9 @@ import io
 import re
 import datetime
 
+# ==========================================
+# 1. MEMORY & UI CONFIGURATION
+# ==========================================
 if 'raw_extracted_data' not in st.session_state:
     st.session_state['raw_extracted_data'] = None
 if 'cleaned_data' not in st.session_state:
@@ -22,12 +25,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="hero-title">🏦 BANK STATEMENT TO TALLY EXCEL</div>', unsafe_allow_html=True)
-st.markdown('<div class="hero-subtitle">100% Accurate Data Extraction | Smart Auto-Unlock</div>', unsafe_allow_html=True)
+st.markdown('<div class="hero-subtitle">100% Accurate Data Extraction | Smart Auto-Unlock | Universal Format</div>', unsafe_allow_html=True)
 
+# ==========================================
+# 2. SMART PASSWORD ENGINE (INDIAN BANKS)
+# ==========================================
 def generate_bank_passwords(name, dob, pan, custom_pwd):
     passwords = []
-    if custom_pwd: 
-        passwords.append(custom_pwd.strip())
+    if custom_pwd: passwords.append(custom_pwd.strip())
     
     if dob:
         d_str = dob.strftime("%d")
@@ -52,56 +57,60 @@ def generate_bank_passwords(name, dob, pan, custom_pwd):
         
     return list(set(passwords))
 
+# ==========================================
+# 3. BACKEND: PDF PARSER WITH PyPDF2 BYPASS
+# ==========================================
 def process_mathematical_parser(file, password_list):
     raw_transactions = []
     pdf_bytes = file.read()
     file.seek(0)
     
     matched_pwd = None
+    is_locked = False
     
+    # Check if natively unlocked
     try:
-        temp_stream = io.BytesIO(pdf_bytes)
-        pdf_reader = PyPDF2.PdfReader(temp_stream)
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as test_pdf:
+            pass
+    except Exception:
+        is_locked = True
         
-        if pdf_reader.is_encrypted:
-            unlocked = False
-            for pwd in password_list:
-                if not pwd: 
-                    continue
-                try:
-                    if pdf_reader.decrypt(pwd): 
-                        unlocked = True
-                        matched_pwd = pwd
-                        break
-                except Exception:
-                    continue
-            
-            if not unlocked:
-                return None, "PDF is locked. Auto-Unlock failed."
+    # PyPDF2 Unlock Engine
+    if is_locked:
+        unlocked = False
+        for pwd in password_list:
+            if not pwd: continue
+            try:
+                with pdfplumber.open(io.BytesIO(pdf_bytes), password=pwd) as test_pdf:
+                    pass
+                unlocked = True
+                matched_pwd = pwd
+                break
+            except Exception:
+                continue
                 
-    except Exception as e:
-        return None, f"Decryption Engine Error: {str(e)}"
+        if not unlocked:
+            return None, "PDF is locked. Auto-Unlock failed. Please provide exact Password/PAN/DOB."
 
     try:
-        original_pdf_stream = io.BytesIO(pdf_bytes)
-        with pdfplumber.open(original_pdf_stream, password=matched_pwd) as pdf:
-            regex_str = r'(\d{1,2}[\s/\-\.]{1,3}(?:[a-zA-Z]{3,10}|\d{1,2})[\s/\-\.]{1,3}\d{2,4})'
-            date_pattern = re.compile(regex_str)
+        pdf_mem = io.BytesIO(pdf_bytes)
+        with pdfplumber.open(pdf_mem, password=matched_pwd) as pdf:
+            
+            # Catch dates ANYWHERE in the line
+            dt_regex = r'(\d{1,2}[\s/\-\.]{1,3}(?:[a-zA-Z]{3,10}|\d{1,2})[\s/\-\.]{1,3}\d{2,4})'
+            date_pattern = re.compile(dt_regex)
 
             for page in pdf.pages:
                 text = page.extract_text(layout=True)
-                if not text: 
-                    text = page.extract_text()
-                if not text: 
-                    continue
+                if not text: text = page.extract_text()
+                if not text: continue
                 
                 lines = text.split('\n')
                 current_txn = None
                 
                 for line in lines:
                     line = line.strip()
-                    if not line: 
-                        continue
+                    if not line: continue
 
                     match = date_pattern.search(line)
                     if match:
@@ -119,9 +128,7 @@ def process_mathematical_parser(file, password_list):
                         narration_words = []
 
                         for part in parts:
-                            cl_part = part.replace(',', '').replace('Cr', '').replace('Dr', '')
-                            cl_part = cl_part.replace('cr', '').replace('dr', '').strip()
-                            
+                            cl_part = part.replace(',', '').replace('Cr', '').replace('Dr', '').replace('cr', '').replace('dr', '').strip()
                             if re.match(r'^-?\d+(\.\d+)?$', cl_part):
                                 if cl_part.startswith('0') and '.' not in cl_part and len(cl_part) >= 4:
                                     narration_words.append(part)
@@ -134,26 +141,16 @@ def process_mathematical_parser(file, password_list):
 
                         balance = 0.0
                         txn_amount = 0.0
-                        if len(numbers) >= 1: 
-                            balance = numbers[-1] 
-                        if len(numbers) >= 2: 
-                            txn_amount = numbers[-2] 
+                        if len(numbers) >= 1: balance = numbers[-1] 
+                        if len(numbers) >= 2: txn_amount = numbers[-2] 
 
-                        current_txn = {
-                            "Date": date_str, 
-                            "Narration": narration, 
-                            "Amount": txn_amount, 
-                            "Balance": balance, 
-                            "Debit": 0.0, 
-                            "Credit": 0.0
-                        }
+                        current_txn = {"Date": date_str, "Narration": narration, "Amount": txn_amount, "Balance": balance, "Debit": 0.0, "Credit": 0.0}
 
                     else:
                         if current_txn and len(line) > 2:
-                            ignore_words = ['page', 'balance', 'total', 'statement', 'branch', 'opening', 'closing']
+                            ignore_words = ['page', 'balance', 'total', 'statement', 'branch', 'opening', 'closing', 'brought forward']
                             if not any(ig in line.lower() for ig in ignore_words):
-                                reg2 = r'^-?\d+(\.\d+)?$'
-                                clean_parts = [p for p in line.split() if not re.match(reg2, p.replace(',',''))]
+                                clean_parts = [p for p in line.split() if not re.match(r'^-?\d+(\.\d+)?$', p.replace(',',''))]
                                 if clean_parts: 
                                     current_txn["Narration"] += " " + " ".join(clean_parts)
 
@@ -161,7 +158,7 @@ def process_mathematical_parser(file, password_list):
                     raw_transactions.append(current_txn)
 
         if not raw_transactions:
-            return None, "No transactions found. Format might be unreadable."
+            return None, "Document unlocked, but no transactions found. Bank format might be unsupported or it's a scanned photo."
 
         for i in range(len(raw_transactions)):
             curr = raw_transactions[i]
@@ -180,8 +177,8 @@ def process_mathematical_parser(file, password_list):
                     curr["Credit"] = curr["Amount"] if curr["Amount"] > 0 else 0.0
             else:
                 narration_upper = curr["Narration"].upper()
-                kw_list = ["RTGS", "NEFT", "UPI", "IMPS", "CHQ", "ATM", "WITHDRAW", "DR", "DEBIT"]
-                if any(kw in narration_upper for kw in kw_list):
+                chk_kws = ["RTGS", "NEFT", "UPI", "IMPS", "CHQ", "ATM", "WITHDRAW", "DR", "DEBIT"]
+                if any(kw in narration_upper for kw in chk_kws):
                     curr["Debit"] = curr["Amount"]
                 else:
                     curr["Credit"] = curr["Amount"]
@@ -190,13 +187,14 @@ def process_mathematical_parser(file, password_list):
     except Exception as e: 
         return None, f"Parsing Error: {str(e)}"
 
+# ==========================================
+# 4. EXCEL CSV PARSER
+# ==========================================
 def process_excel_parser(file):
     raw_transactions = []
     try:
-        if file.name.endswith('.csv'): 
-            df = pd.read_csv(file, skip_blank_lines=True)
-        else: 
-            df = pd.read_excel(file)
+        if file.name.endswith('.csv'): df = pd.read_csv(file, skip_blank_lines=True)
+        else: df = pd.read_excel(file)
             
         df.dropna(how='all', inplace=True)
         df.dropna(axis=1, how='all', inplace=True)
@@ -205,7 +203,7 @@ def process_excel_parser(file):
         header_idx = -1
         for i in range(min(20, len(df))):
             row_str = ' '.join(str(x).lower() for x in df.iloc[i].values)
-            if 'date' in row_str and ('narration' in row_str or 'particulars' in row_str):
+            if 'date' in row_str and ('narration' in row_str or 'particulars' in row_str or 'description' in row_str):
                 header_idx = i
                 break
                 
@@ -216,58 +214,32 @@ def process_excel_parser(file):
         df.columns = [str(c).strip().lower() for c in df.columns]
         cols = df.columns
         date_col = next((c for c in cols if 'date' in c), None)
-        
-        n_kws = ['narration', 'particulars', 'description']
-        narration_col = next((c for c in cols if any(x in c for x in n_kws)), None)
-        
-        dr_kws = ['debit', 'withdrawal', 'dr']
-        debit_col = next((c for c in cols if any(x in c for x in dr_kws)), None)
-        
-        cr_kws = ['credit', 'deposit', 'cr']
-        credit_col = next((c for c in cols if any(x in c for x in cr_kws)), None)
-        
+        narration_col = next((c for c in cols if any(x in c for x in ['narration', 'particulars', 'description'])), None)
+        debit_col = next((c for c in cols if any(x in c for x in ['debit', 'withdrawal', 'dr'])), None)
+        credit_col = next((c for c in cols if any(x in c for x in ['credit', 'deposit', 'cr'])), None)
         balance_col = next((c for c in cols if 'balance' in c), None)
         
-        if not date_col or not narration_col: 
-            return None, "Format error: Date/Narration not found."
+        if not date_col or not narration_col: return None, "Format error: Date/Narration not found."
             
         for _, row in df.iterrows():
             raw_date = row[date_col]
-            if pd.isna(raw_date) or str(raw_date).strip().lower() == 'nan': 
-                continue
-            
-            if isinstance(raw_date, pd.Timestamp):
-                date_val = raw_date.strftime('%d/%m/%Y')
-            else:
-                date_val = str(raw_date).split(' ')[0]
-                
+            if pd.isna(raw_date) or str(raw_date).strip().lower() == 'nan': continue
+            date_val = raw_date.strftime('%d/%m/%Y') if isinstance(raw_date, pd.Timestamp) else str(raw_date).split(' ')[0]
             narration_val = str(row[narration_col]).strip()
-            if narration_val.lower() == 'nan': 
-                narration_val = ""
+            if narration_val.lower() == 'nan': narration_val = ""
             
             def clean_val(v):
-                try: 
-                    cs = str(v).replace(',', '').replace('Cr', '').replace('Dr', '')
-                    cs = cs.replace('cr', '').replace('dr', '').strip()
-                    return float(cs)
-                except Exception: 
-                    return 0.0
+                try: return float(str(v).replace(',', '').replace('Cr', '').replace('Dr', '').replace('cr', '').replace('dr', '').strip())
+                except: return 0.0
                     
             debit_val = clean_val(row[debit_col]) if debit_col else 0.0
             credit_val = clean_val(row[credit_col]) if credit_col else 0.0
             balance_val = clean_val(row[balance_col]) if balance_col else 0.0
                 
-            raw_transactions.append({
-                "Date": date_val, 
-                "Narration": narration_val, 
-                "Debit": debit_val, 
-                "Credit": credit_val, 
-                "Balance": balance_val
-            })
+            raw_transactions.append({"Date": date_val, "Narration": narration_val, "Debit": debit_val, "Credit": credit_val, "Balance": balance_val})
             
         return raw_transactions, "Success"
-    except Exception as e: 
-        return None, f"Excel Error: {str(e)}"
+    except Exception as e: return None, f"Excel Error: {str(e)}"
 
 def to_excel(df):
     output = io.BytesIO()
@@ -275,19 +247,23 @@ def to_excel(df):
         df.to_excel(writer, index=False, sheet_name='TallyData')
     return output.getvalue()
 
+# ==========================================
+# 5. UI: DATA EXTRACTION BLOCK
+# ==========================================
 uploaded_file = st.file_uploader("Upload Bank Statement (PDF, Excel, CSV)", type=['pdf', 'xlsx', 'xls', 'csv'])
 
 if uploaded_file:
-    st.markdown("### 🔐 Smart Auto-Unlock")
+    st.markdown("### 🔐 Smart Auto-Unlock (For Locked PDFs)")
+    st.info("Enter client details once, and we'll automatically try all combinations (ICICI, SBI, Axis formats).")
     
     col1, col2, col3, col4 = st.columns(4)
-    with col1: client_name = st.text_input("First Name (e.g. Rahul)")
-    with col2: client_dob = st.date_input("Date of Birth", value=None)
-    with col3: client_pan = st.text_input("PAN Number")
-    with col4: custom_pwd = st.text_input("Exact Password", type="password")
+    with col1: client_name = st.text_input("First Name (e.g. Rahul)", help="Required for ICICI/Axis")
+    with col2: client_dob = st.date_input("Date of Birth", value=None, help="Required for SBI/ICICI")
+    with col3: client_pan = st.text_input("PAN Number", help="Required for HDFC/Axis")
+    with col4: custom_pwd = st.text_input("Or exact Password/CRN", type="password")
     
     if st.button("🚀 Process & Extract Data", use_container_width=True):
-        with st.spinner("Decoding Document & Extracting Data..."):
+        with st.spinner("Decoding Document & Extracting Data... please wait"):
             
             passwords_to_try = generate_bank_passwords(client_name, client_dob, client_pan, custom_pwd)
             
@@ -302,10 +278,13 @@ if uploaded_file:
                     df_tally_ready = df[['Date', 'Narration', 'Debit', 'Credit', 'Balance']]
                     st.session_state['raw_extracted_data'] = df_tally_ready.copy()
                 else:
-                    st.error("❌ No transactions found.")
+                    st.error("❌ Error: Document unlocked, but no transactions found. Format might be unreadable or a scanned photo.")
             else:
                 st.error(f"❌ Error: {status}")
 
+# ==========================================
+# 6. UI: DATE FILTER & DASHBOARD
+# ==========================================
 if st.session_state.get('raw_extracted_data') is not None:
     full_df = st.session_state['raw_extracted_data'].copy()
     
@@ -330,7 +309,7 @@ if st.session_state.get('raw_extracted_data') is not None:
     filtered_df = full_df.loc[mask].copy()
     
     if filtered_df.empty:
-        st.warning("⚠️ No transactions found for these dates. Showing all data.")
+        st.warning("⚠️ Warning: No transactions found for these dates. Showing all data.")
         filtered_df = full_df.copy()
         
     filtered_df = filtered_df.drop(columns=['Date_Obj'], errors='ignore')
@@ -347,7 +326,36 @@ if st.session_state.get('raw_extracted_data') is not None:
     
     st.session_state['cleaned_data'] = filtered_df.copy()
     
-    st.success("✅ Data Ready! Exports below are updated.")
+    st.success("✅ Data Ready! The table and exports below are automatically updated.")
+    
+    # ⚡ FIX: F-strings removed from HTML concatenation to prevent syntax wrap error
+    v_op = "{:,.2f}".format(meta_filtered["opening_bal"])
+    v_dr = "{:,.2f}".format(meta_filtered["total_debit_amt"])
+    v_cr = "{:,.2f}".format(meta_filtered["total_credit_amt"])
+    v_cl = "{:,.2f}".format(meta_filtered["closing_bal"])
+    
+    c_dr = str(meta_filtered["debit_count"])
+    c_cr = str(meta_filtered["credit_count"])
+    
+    html1 = '<div class="metric-card"><b>Opening Bal</b><br>₹ ' + v_op + '</div>'
+    html2 = '<div class="metric-card"><b>Total Debits (-)</b><br>₹ ' + v_dr + '<br><span style="font-size:13px; color:#6B7280;">(' + c_dr + ' Txns)</span></div>'
+    html3 = '<div class="metric-card"><b>Total Credits (+)</b><br>₹ ' + v_cr + '<br><span style="font-size:13px; color:#6B7280;">(' + c_cr + ' Txns)</span></div>'
+    html4 = '<div class="metric-card"><b>Closing Bal</b><br>₹ ' + v_cl + '</div>'
     
     m1, m2, m3, m4 = st.columns(4)
-    m1.markdown(f'<div class="metric-card"><b>Opening Bal</b><br>₹ {meta_filtered["opening_bal"]:
+    m1.markdown(html1, unsafe_allow_html=True)
+    m2.markdown(html2, unsafe_allow_html=True)
+    m3.markdown(html3, unsafe_allow_html=True)
+    m4.markdown(html4, unsafe_allow_html=True)
+    
+    st.write("<br>", unsafe_allow_html=True)
+    st.write("### 📝 Data Preview")
+        
+    st.dataframe(filtered_df, use_container_width=True) 
+    
+    c1, c2 = st.columns(2)
+    csv_bytes = filtered_df.to_csv(index=False).encode('utf-8')
+    c1.download_button("Download CSV", csv_bytes, "alpha_tally_ready.csv", "text/csv", use_container_width=True)
+    
+    excel_bytes = to_excel(filtered_df)
+    c2.download_button("Download Excel (.xlsx)", excel_bytes, "alpha_tally_ready.xlsx", use_container_width=True)
