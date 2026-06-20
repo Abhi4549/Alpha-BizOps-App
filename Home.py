@@ -1,12 +1,13 @@
 import streamlit as st
 import pandas as pd
 import pdfplumber
+import PyPDF2
 import io
 import re
 import datetime
 
 # ==========================================
-# 1. MEMORY & UI CONFIGURATION (THE BRIDGE)
+# 1. MEMORY & UI CONFIGURATION
 # ==========================================
 if 'raw_extracted_data' not in st.session_state:
     st.session_state['raw_extracted_data'] = None
@@ -24,16 +25,86 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="hero-title">🏦 BANK STATEMENT TO TALLY EXCEL</div>', unsafe_allow_html=True)
-st.markdown('<div class="hero-subtitle">100% Accurate Data Extraction | Custom Date Filter | Auto-Sync to Ledger Mapper</div>', unsafe_allow_html=True)
+st.markdown('<div class="hero-subtitle">100% Accurate Data Extraction | Smart Auto-Unlock | Universal Format</div>', unsafe_allow_html=True)
 
 # ==========================================
-# 2. BACKEND: PDF & EXCEL PARSERS
+# 2. SMART PASSWORD ENGINE (INDIAN BANKS)
 # ==========================================
-def process_mathematical_parser(file, password=""):
+def generate_bank_passwords(name, dob, pan, custom_pwd):
+    passwords = []
+    if custom_pwd: passwords.append(custom_pwd.strip())
+    
+    if dob:
+        d_str = dob.strftime("%d")
+        m_str = dob.strftime("%m")
+        y_full = dob.strftime("%Y")
+        y_short = dob.strftime("%y")
+        # SBI / PNB / BOB formats
+        passwords.extend([f"{d_str}{m_str}{y_full}", f"{d_str}{m_str}{y_short}"])
+        
+        if name:
+            name_clean = re.sub(r'[^a-zA-Z]', '', name)
+            if len(name_clean) >= 4:
+                first_4_lower = name_clean[:4].lower()
+                first_4_upper = name_clean[:4].upper()
+                # ICICI / Axis formats
+                passwords.extend([
+                    f"{first_4_lower}{d_str}{m_str}",
+                    f"{first_4_upper}{d_str}{m_str}",
+                    f"{first_4_lower}{d_str}{m_str}{y_full}"
+                ])
+                
+    if pan:
+        # HDFC / Axis PAN formats
+        passwords.extend([pan.lower().strip(), pan.upper().strip()])
+        
+    return list(set(passwords)) # Remove duplicates
+
+# ==========================================
+# 3. BACKEND: PDF PARSER WITH PyPDF2 BYPASS
+# ==========================================
+def process_mathematical_parser(file, password_list):
     raw_transactions = []
+    pdf_bytes = file.read()
+    file.seek(0)
+    
+    unlocked_pdf_stream = None
+    
+    # ⚡ ENGINE 1: PyPDF2 SECURITY BYPASS (Tala Todna)
     try:
-        with pdfplumber.open(file, password=password) as pdf:
-            # ⚡ UNIVERSAL DATE PATTERN: Covers 12/04/23, 12-Apr-2023, 12.04.2023, etc.
+        temp_stream = io.BytesIO(pdf_bytes)
+        pdf_reader = PyPDF2.PdfReader(temp_stream)
+        
+        if pdf_reader.is_encrypted:
+            unlocked = False
+            for pwd in password_list:
+                if not pwd: continue
+                try:
+                    if pdf_reader.decrypt(pwd): 
+                        unlocked = True
+                        break
+                except: continue
+            
+            if not unlocked:
+                return None, "PDF is locked. Auto-Unlock failed. Please provide exact Password/PAN/DOB."
+            
+            # Create a new decrypted PDF in memory
+            pdf_writer = PyPDF2.PdfWriter()
+            for page in pdf_reader.pages:
+                pdf_writer.add_page(page)
+            
+            unlocked_pdf_stream = io.BytesIO()
+            pdf_writer.write(unlocked_pdf_stream)
+            unlocked_pdf_stream.seek(0)
+        else:
+            unlocked_pdf_stream = io.BytesIO(pdf_bytes)
+            
+    except Exception as e:
+        return None, f"Decryption Engine Error: {str(e)}"
+
+    # ⚡ ENGINE 2: PDFPLUMBER EXTRACTION (Padhna)
+    try:
+        with pdfplumber.open(unlocked_pdf_stream) as pdf:
             date_pattern = re.compile(r'^\s*(\d{1,2}[/\-\.](?:[a-zA-Z]{3}|\d{1,2})[/\-\.]\d{2,4})')
 
             for page in pdf.pages:
@@ -50,22 +121,16 @@ def process_mathematical_parser(file, password=""):
                     if match:
                         if current_txn: raw_transactions.append(current_txn)
 
-                        # Extract Date and standardize separator to '/'
                         date_str = match.group(1).replace('.', '/').replace('-', '/')
                         rem = line[len(match.group(0)):].strip()
 
-                        # Extract Words and Numbers separately
                         parts = rem.split()
                         numbers = []
                         narration_words = []
 
                         for part in parts:
-                            # Clean special characters from numbers
                             cl_part = part.replace(',', '').replace('Cr', '').replace('Dr', '').replace('cr', '').replace('dr', '').strip()
-                            
-                            # Check if it's a valid financial amount
                             if re.match(r'^-?\d+(\.\d+)?$', cl_part):
-                                # Bypass Cheque Numbers (Starts with 0 and has no decimals)
                                 if cl_part.startswith('0') and '.' not in cl_part and len(cl_part) >= 4:
                                     narration_words.append(part)
                                 else:
@@ -75,18 +140,14 @@ def process_mathematical_parser(file, password=""):
 
                         narration = " ".join(narration_words)
 
-                        # ⚡ SMART BALANCE DETECTION
                         balance = 0.0
                         txn_amount = 0.0
-                        
-                        # The very last number in a bank statement row is ALMOST ALWAYS the Balance
                         if len(numbers) >= 1: balance = numbers[-1] 
                         if len(numbers) >= 2: txn_amount = numbers[-2] 
 
                         current_txn = {"Date": date_str, "Narration": narration, "Amount": txn_amount, "Balance": balance, "Debit": 0.0, "Credit": 0.0}
 
                     else:
-                        # ⚡ SMART NARRATION CONTINUATION: For multi-line descriptions
                         if current_txn and len(line) > 2:
                             ignore_words = ['page', 'balance', 'total', 'statement', 'branch', 'opening', 'closing', 'brought forward']
                             if not any(ig in line.lower() for ig in ignore_words):
@@ -95,15 +156,12 @@ def process_mathematical_parser(file, password=""):
 
                 if current_txn: raw_transactions.append(current_txn)
 
-        # ⚡ UNIVERSAL MATH LOGIC: Calculate Debit/Credit using Balance Difference
+        # UNIVERSAL MATH LOGIC (Debit/Credit Calculation)
         for i in range(len(raw_transactions)):
             curr = raw_transactions[i]
-
             if i > 0:
                 prev_bal = raw_transactions[i-1]["Balance"]
                 curr_bal = curr["Balance"]
-                
-                # Difference between today's balance and yesterday's balance = Exact Transaction Amount
                 diff = round(curr_bal - prev_bal, 2)
 
                 if diff > 0:
@@ -113,11 +171,8 @@ def process_mathematical_parser(file, password=""):
                     curr["Debit"] = abs(diff)
                     curr["Credit"] = 0.0
                 else:
-                    # Fallback if balance didn't change (rare)
                     curr["Credit"] = curr["Amount"] if curr["Amount"] > 0 else 0.0
-
             else:
-                # First transaction guess since no previous balance exists
                 narration_upper = curr["Narration"].upper()
                 if any(kw in narration_upper for kw in ["RTGS", "NEFT", "UPI", "IMPS", "CHQ", "ATM", "WITHDRAW", "DR", "DEBIT"]):
                     curr["Debit"] = curr["Amount"]
@@ -125,24 +180,16 @@ def process_mathematical_parser(file, password=""):
                     curr["Credit"] = curr["Amount"]
 
         return raw_transactions, "Success"
-    except Exception as e: return None, f"PDF Error: {str(e)}"
+    except Exception as e: return None, f"Parsing Error: {str(e)}"
 
-def process_excel_parser(file, password=""):
+# ==========================================
+# 4. EXCEL CSV PARSER
+# ==========================================
+def process_excel_parser(file):
     raw_transactions = []
     try:
-        if file.name.endswith('.csv'): 
-            df = pd.read_csv(file, skip_blank_lines=True)
-        else:
-            if password:
-                import msoffcrypto
-                decrypted_file = io.BytesIO()
-                office_file = msoffcrypto.OfficeFile(file)
-                office_file.load_key(password=password)
-                office_file.decrypt(decrypted_file)
-                decrypted_file.seek(0)
-                df = pd.read_excel(decrypted_file)
-            else:
-                df = pd.read_excel(file)
+        if file.name.endswith('.csv'): df = pd.read_csv(file, skip_blank_lines=True)
+        else: df = pd.read_excel(file)
             
         df.dropna(how='all', inplace=True)
         df.dropna(axis=1, how='all', inplace=True)
@@ -196,21 +243,32 @@ def to_excel(df):
     return output.getvalue()
 
 # ==========================================
-# 3. DATA EXTRACTION BLOCK
+# 5. UI: DATA EXTRACTION BLOCK
 # ==========================================
 uploaded_file = st.file_uploader("Upload Bank Statement (PDF, Excel, CSV)", type=['pdf', 'xlsx', 'xls', 'csv'])
 
 if uploaded_file:
-    file_password = st.text_input("Document Password (If Locked)", type="password") 
+    st.markdown("### 🔐 Smart Auto-Unlock (For Locked PDFs)")
+    st.info("Enter client details once, and we'll automatically try all combinations (ICICI, SBI, Axis formats).")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    with col1: client_name = st.text_input("First Name (e.g. Rahul)", help="Required for ICICI/Axis")
+    with col2: client_dob = st.date_input("Date of Birth", value=None, help="Required for SBI/ICICI")
+    with col3: client_pan = st.text_input("PAN Number", help="Required for HDFC/Axis")
+    with col4: custom_pwd = st.text_input("Or exact Password/CRN", type="password")
     
     if st.button("🚀 Process & Extract Data", use_container_width=True):
-        with st.spinner("Processing Document... please wait"):
-            if uploaded_file.name.endswith('.pdf'): 
-                raw_data, status = process_mathematical_parser(uploaded_file, file_password)
-            else: 
-                raw_data, status = process_excel_parser(uploaded_file, file_password)
+        with st.spinner("Decoding Document & Extracting Data... please wait"):
             
-            if raw_data:
+            passwords_to_try = generate_bank_passwords(client_name, client_dob, client_pan, custom_pwd)
+            
+            if uploaded_file.name.endswith('.pdf'): 
+                raw_data, status = process_mathematical_parser(uploaded_file, passwords_to_try)
+            else: 
+                raw_data, status = process_excel_parser(uploaded_file)
+            
+            # ⚡ YAHAN FIX HUA HAI THE BUG 'is not None'
+            if raw_data is not None:
                 df = pd.DataFrame(raw_data)
                 df_tally_ready = df[['Date', 'Narration', 'Debit', 'Credit', 'Balance']]
                 st.session_state['raw_extracted_data'] = df_tally_ready.copy()
@@ -218,7 +276,7 @@ if uploaded_file:
                 st.error(f"❌ Error: {status}")
 
 # ==========================================
-# 4. MAIN PAGE DATE FILTER & DISPLAY BLOCK
+# 6. UI: DATE FILTER & DASHBOARD
 # ==========================================
 if st.session_state.get('raw_extracted_data') is not None:
     full_df = st.session_state['raw_extracted_data'].copy()
@@ -226,7 +284,6 @@ if st.session_state.get('raw_extracted_data') is not None:
     st.write("---")
     st.markdown("### 📅 Select Specific Dates for Tally")
     
-    # ⚡ DATE FIX: Ab date column kaise bhi ho, ye pakad lega
     full_df['Date_Obj'] = pd.to_datetime(full_df['Date'], errors='coerce', dayfirst=True)
     valid_dates = full_df.dropna(subset=['Date_Obj'])
     
@@ -234,18 +291,13 @@ if st.session_state.get('raw_extracted_data') is not None:
         min_date = valid_dates['Date_Obj'].min().date()
         max_date = valid_dates['Date_Obj'].max().date()
     else:
-        # Agar date padhi nahi gayi, toh bhi boxes hamesha aayenge
         min_date = datetime.date(2023, 4, 1)
         max_date = datetime.date.today()
         
-    # YAHAN AAPKE BOXES HAMESHA DIKHENGE
     c1, c2 = st.columns(2)
-    with c1:
-        from_date = st.date_input("From Date:", value=min_date)
-    with c2:
-        to_date = st.date_input("To Date:", value=max_date)
+    with c1: from_date = st.date_input("From Date:", value=min_date)
+    with c2: to_date = st.date_input("To Date:", value=max_date)
     
-    # Date Filtering Logic
     mask = (full_df['Date_Obj'].dt.date >= from_date) & (full_df['Date_Obj'].dt.date <= to_date)
     filtered_df = full_df.loc[mask].copy()
     
@@ -255,7 +307,6 @@ if st.session_state.get('raw_extracted_data') is not None:
         
     filtered_df = filtered_df.drop(columns=['Date_Obj'], errors='ignore')
     
-    # Naye Filtered Data ke hisaab se Meta Recalculate karna
     meta_filtered = {"opening_bal": 0.0, "closing_bal": 0.0, "debit_count": 0, "credit_count": 0, "total_debit_amt": 0.0, "total_credit_amt": 0.0}
     if not filtered_df.empty:
         meta_filtered["opening_bal"] = filtered_df.iloc[0]['Balance'] - filtered_df.iloc[0]['Credit'] + filtered_df.iloc[0]['Debit']
@@ -265,10 +316,8 @@ if st.session_state.get('raw_extracted_data') is not None:
         meta_filtered["total_debit_amt"] = filtered_df['Debit'].sum()
         meta_filtered["total_credit_amt"] = filtered_df['Credit'].sum()
     
-    # Final filter data memory me save karo Ledger Mapping page ke liye
     st.session_state['cleaned_data'] = filtered_df.copy()
     
-    # ------------------ DASHBOARD DISPLAY ------------------
     st.success("✅ Data Ready! The table and exports below are automatically updated.")
     
     m1, m2, m3, m4 = st.columns(4)
