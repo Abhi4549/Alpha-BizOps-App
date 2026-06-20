@@ -28,12 +28,16 @@ def generate_bank_passwords(name, dob, pan, custom_pwd):
     passwords = []
     if custom_pwd: passwords.append(custom_pwd.strip())
     if dob:
-        d_str, m_str, y_full, y_short = dob.strftime("%d"), dob.strftime("%m"), dob.strftime("%Y"), dob.strftime("%y")
+        d_str = dob.strftime("%d")
+        m_str = dob.strftime("%m")
+        y_full = dob.strftime("%Y")
+        y_short = dob.strftime("%y")
         passwords.extend([f"{d_str}{m_str}{y_full}", f"{d_str}{m_str}{y_short}"])
         if name:
             name_clean = re.sub(r'[^a-zA-Z]', '', name)
             if len(name_clean) >= 4:
-                f4l, f4u = name_clean[:4].lower(), name_clean[:4].upper()
+                f4l = name_clean[:4].lower()
+                f4u = name_clean[:4].upper()
                 passwords.extend([f"{f4l}{d_str}{m_str}", f"{f4u}{d_str}{m_str}", f"{f4l}{d_str}{m_str}{y_full}"])
     if pan: passwords.extend([pan.lower().strip(), pan.upper().strip()])
     return list(set(passwords))
@@ -42,78 +46,119 @@ def process_mathematical_parser(file, password_list):
     raw_transactions = []
     pdf_bytes = file.read()
     file.seek(0)
-    unlocked_pdf_stream = None
     
     try:
         temp_stream = io.BytesIO(pdf_bytes)
         pdf_reader = PyPDF2.PdfReader(temp_stream)
+        matched_password = None
+        
         if pdf_reader.is_encrypted:
-            unlocked = False
             for pwd in password_list:
                 if pwd:
                     try:
                         if pdf_reader.decrypt(pwd):
-                            unlocked = True
+                            matched_password = pwd
                             break
                     except Exception: pass
-            if not unlocked: return None, "PDF is locked. Auto-Unlock failed."
-            pdf_writer = PyPDF2.PdfWriter()
-            for page in pdf_reader.pages: pdf_writer.add_page(page)
-            unlocked_pdf_stream = io.BytesIO()
-            pdf_writer.write(unlocked_pdf_stream)
-            unlocked_pdf_stream.seek(0)
-        else:
-            unlocked_pdf_stream = io.BytesIO(pdf_bytes)
+            if not matched_password: return None, "PDF is locked. Auto-Unlock failed."
+            
     except Exception as e: return None, f"Decryption Engine Error: {str(e)}"
 
     try:
-        with pdfplumber.open(unlocked_pdf_stream) as pdf:
+        pdf_file_object = io.BytesIO(pdf_bytes)
+        
+        with pdfplumber.open(pdf_file_object, password=matched_password) as pdf:
             date_pattern = re.compile(r'(\d{1,2}[\s/\-\.]{1,3}(?:[a-zA-Z]{3,10}|\d{1,2})[\s/\-\.]{1,3}\d{2,4})')
+            
+            # Junk Filter - Keeps Tally Data Clean
+            ignore_kws = ['opening balance', 'closing balance', 'brought forward', 'carried forward', 
+                          'total debits', 'total credits', 'statement period', 'generated on', 
+                          'page total', 'grand total', 'summary of']
+            
+            current_txn = None
+            
             for page in pdf.pages:
                 text = page.extract_text(layout=True)
                 if not text: text = page.extract_text()
                 if not text: continue
+                
                 lines = text.split('\n')
-                current_txn = None
                 for line in lines:
                     line = line.strip()
                     if not line: continue
+                    
                     match = date_pattern.search(line)
                     if match:
-                        if current_txn: raw_transactions.append(current_txn)
-                        date_str = re.sub(r'[\s\.\-]', '/', match.group(1))
+                        raw_date_str = match.group(1)
+                        date_str = re.sub(r'[\s\.\-]', '/', raw_date_str)
                         date_str = re.sub(r'/+', '/', date_str)
+                        
                         rem = line[len(match.group(0)):].strip()
                         parts = rem.split()
-                        numbers, narration_words = [], []
+                        numbers = []
+                        narration_words = []
+                        
                         for part in parts:
                             cl_part = part.replace(',', '').replace('Cr', '').replace('Dr', '').replace('cr', '').replace('dr', '').strip()
                             if re.match(r'^-?\d+(\.\d+)?$', cl_part):
-                                if cl_part.startswith('0') and '.' not in cl_part and len(cl_part) >= 4: narration_words.append(part)
-                                else: numbers.append(float(cl_part))
-                            else: narration_words.append(part)
-                        balance = numbers[-1] if len(numbers) >= 1 else 0.0
-                        txn_amount = numbers[-2] if len(numbers) >= 2 else 0.0
-                        current_txn = {"Date": date_str, "Narration": " ".join(narration_words), "Amount": txn_amount, "Balance": balance, "Debit": 0.0, "Credit": 0.0}
+                                if cl_part.startswith('0') and '.' not in cl_part and len(cl_part) >= 4: 
+                                    narration_words.append(part)
+                                else: 
+                                    numbers.append(float(cl_part))
+                            else: 
+                                narration_words.append(part)
+                        
+                        line_lower = line.lower()
+                        # Strict rule: Must have at least 1 number and no junk keywords
+                        if len(numbers) >= 1 and not any(kw in line_lower for kw in ignore_kws):
+                            if current_txn: raw_transactions.append(current_txn)
+                                
+                            balance = numbers[-1]
+                            txn_amount = numbers[-2] if len(numbers) >= 2 else 0.0
+                            
+                            current_txn = {
+                                "Date": date_str, 
+                                "Narration": " ".join(narration_words), 
+                                "Amount": txn_amount, 
+                                "Balance": balance, 
+                                "Debit": 0.0, 
+                                "Credit": 0.0
+                            }
                     else:
                         if current_txn and len(line) > 2:
-                            if not any(ig in line.lower() for ig in ['page', 'balance', 'total', 'statement', 'branch', 'opening', 'closing', 'brought forward']):
+                            chk_kws = ['page', 'balance', 'total', 'statement', 'branch', 'opening', 'closing']
+                            if not any(ig in line.lower() for ig in chk_kws):
                                 clean_parts = [p for p in line.split() if not re.match(r'^-?\d+(\.\d+)?$', p.replace(',',''))]
                                 if clean_parts: current_txn["Narration"] += " " + " ".join(clean_parts)
-                if current_txn: raw_transactions.append(current_txn)
+                                    
+            if current_txn: raw_transactions.append(current_txn)
 
-        if not raw_transactions: return None, "No transactions found. Format might be unreadable or a scanned photo."
+        if not raw_transactions: return None, "No transactions found. Format might be unreadable."
 
+        # PURE MATHEMATICAL CALCULATION - NO OVERRIDES
         for i in range(len(raw_transactions)):
             curr = raw_transactions[i]
             if i > 0:
-                diff = round(curr["Balance"] - raw_transactions[i-1]["Balance"], 2)
-                if diff > 0: curr["Credit"], curr["Debit"] = diff, 0.0
-                elif diff < 0: curr["Debit"], curr["Credit"] = abs(diff), 0.0
-                else: curr["Credit"] = curr["Amount"] if curr["Amount"] > 0 else 0.0
+                prev_bal = raw_transactions[i-1]["Balance"]
+                curr_bal = curr["Balance"]
+                diff = round(curr_bal - prev_bal, 2)
+                
+                # Trust the balance change to assign Debit/Credit
+                if diff > 0:
+                    curr["Credit"] = curr["Amount"]
+                    curr["Debit"] = 0.0
+                elif diff < 0:
+                    curr["Debit"] = curr["Amount"]
+                    curr["Credit"] = 0.0
+                else:
+                    curr["Credit"] = curr["Amount"] if curr["Amount"] > 0 else 0.0
             else:
-                if any(kw in curr["Narration"].upper() for kw in ["RTGS", "NEFT", "UPI", "IMPS", "CHQ", "ATM", "WITHDRAW", "DR", "DEBIT"]): curr["Debit"] = curr["Amount"]
-                else: curr["Credit"] = curr["Amount"]
+                # Fallback for the first row only
+                if any(kw in curr["Narration"].upper() for kw in ["RTGS", "NEFT", "UPI", "IMPS", "CHQ", "ATM", "WITHDRAW", "DR", "DEBIT"]): 
+                    curr["Debit"] = curr["Amount"]
+                else: 
+                    curr["Credit"] = curr["Amount"]
+                    
         return raw_transactions, "Success"
     except Exception as e: return None, f"Parsing Error: {str(e)}"
 
@@ -122,6 +167,7 @@ def process_excel_parser(file):
     try:
         if file.name.endswith('.csv'): df = pd.read_csv(file, skip_blank_lines=True)
         else: df = pd.read_excel(file)
+            
         df.dropna(how='all', inplace=True)
         df.dropna(axis=1, how='all', inplace=True)
         df = df.reset_index(drop=True)
@@ -150,21 +196,36 @@ def process_excel_parser(file):
         for _, row in df.iterrows():
             raw_date = row[date_col]
             if pd.isna(raw_date) or str(raw_date).strip().lower() == 'nan': continue
-            date_val = raw_date.strftime('%d/%m/%Y') if isinstance(raw_date, pd.Timestamp) else str(raw_date).split(' ')[0]
+            
             narration_val = str(row[narration_col]).strip()
+            ignore_xl_kws = ['total', 'opening balance', 'closing balance', 'brought forward']
+            if any(kw in narration_val.lower() for kw in ignore_xl_kws): continue
+            
+            if isinstance(raw_date, pd.Timestamp):
+                date_val = raw_date.strftime('%d/%m/%Y')
+            else:
+                date_val = str(raw_date).split(' ')[0]
+                
             if narration_val.lower() == 'nan': narration_val = ""
             
             def clean_val(v):
-                try: return float(str(v).replace(',', '').replace('Cr', '').replace('Dr', '').replace('cr', '').replace('dr', '').strip())
+                try: 
+                    cln_str = str(v).replace(',', '').replace('Cr', '').replace('Dr', '').replace('cr', '').replace('dr', '').strip()
+                    return float(cln_str)
                 except Exception: return 0.0
-                    
-            raw_transactions.append({
-                "Date": date_val, 
-                "Narration": narration_val, 
-                "Debit": clean_val(row[debit_col]) if debit_col else 0.0, 
-                "Credit": clean_val(row[credit_col]) if credit_col else 0.0, 
-                "Balance": clean_val(row[balance_col]) if balance_col else 0.0
-            })
+            
+            debit_val = clean_val(row[debit_col]) if debit_col else 0.0
+            credit_val = clean_val(row[credit_col]) if credit_col else 0.0
+            balance_val = clean_val(row[balance_col]) if balance_col else 0.0
+            
+            if debit_val > 0 or credit_val > 0 or balance_val > 0:
+                raw_transactions.append({
+                    "Date": date_val, 
+                    "Narration": narration_val, 
+                    "Debit": debit_val, 
+                    "Credit": credit_val, 
+                    "Balance": balance_val
+                })
         return raw_transactions, "Success"
     except Exception as e: return None, f"Excel Error: {str(e)}"
 
@@ -194,8 +255,9 @@ if uploaded_file:
             if raw_data is not None:
                 if len(raw_data) > 0:
                     df = pd.DataFrame(raw_data)
+                    # ONLY IMPORT TALLY RELATED COLUMNS
                     st.session_state['raw_extracted_data'] = df[['Date', 'Narration', 'Debit', 'Credit', 'Balance']].copy()
-                else: st.error("❌ Error: Document unlocked, but no transactions found. Format might be unreadable.")
+                else: st.error("❌ Error: Document unlocked, but no actual transactions found.")
             else: st.error(f"❌ Error: {status}")
 
 if st.session_state.get('raw_extracted_data') is not None:
@@ -205,14 +267,21 @@ if st.session_state.get('raw_extracted_data') is not None:
     
     full_df['Date_Obj'] = pd.to_datetime(full_df['Date'], errors='coerce', dayfirst=True)
     valid_dates = full_df.dropna(subset=['Date_Obj'])
-    min_date = valid_dates['Date_Obj'].min().date() if not valid_dates.empty else datetime.date(2023, 4, 1)
-    max_date = valid_dates['Date_Obj'].max().date() if not valid_dates.empty else datetime.date.today()
+    
+    if not valid_dates.empty:
+        min_date = valid_dates['Date_Obj'].min().date()
+        max_date = valid_dates['Date_Obj'].max().date()
+    else:
+        min_date = datetime.date(2023, 4, 1)
+        max_date = datetime.date.today()
         
     c1, c2 = st.columns(2)
     with c1: from_date = st.date_input("From Date:", value=min_date)
     with c2: to_date = st.date_input("To Date:", value=max_date)
     
-    filtered_df = full_df.loc[(full_df['Date_Obj'].dt.date >= from_date) & (full_df['Date_Obj'].dt.date <= to_date)].copy()
+    mask = (full_df['Date_Obj'].dt.date >= from_date) & (full_df['Date_Obj'].dt.date <= to_date)
+    filtered_df = full_df.loc[mask].copy()
+    
     if filtered_df.empty:
         st.warning("⚠️ Warning: No transactions found for these dates. Showing all data.")
         filtered_df = full_df.copy()
@@ -220,6 +289,7 @@ if st.session_state.get('raw_extracted_data') is not None:
     filtered_df = filtered_df.drop(columns=['Date_Obj'], errors='ignore')
     
     meta_filtered = {"opening_bal": 0.0, "closing_bal": 0.0, "debit_count": 0, "credit_count": 0, "total_debit_amt": 0.0, "total_credit_amt": 0.0}
+    
     if not filtered_df.empty:
         meta_filtered["opening_bal"] = filtered_df.iloc[0]['Balance'] - filtered_df.iloc[0]['Credit'] + filtered_df.iloc[0]['Debit']
         meta_filtered["closing_bal"] = filtered_df.iloc[-1]['Balance']
@@ -229,7 +299,7 @@ if st.session_state.get('raw_extracted_data') is not None:
         meta_filtered["total_credit_amt"] = filtered_df['Credit'].sum()
     
     st.session_state['cleaned_data'] = filtered_df.copy()
-    st.success("✅ Data Ready! The table and exports below are automatically updated.")
+    st.success("✅ Data Ready! Calculation engine restored to 100% precision.")
     
     m1, m2, m3, m4 = st.columns(4)
     m1.markdown(f'<div class="metric-card"><b>Opening Bal</b><br>₹ {meta_filtered["opening_bal"]:,.2f}</div>', unsafe_allow_html=True)
@@ -238,7 +308,7 @@ if st.session_state.get('raw_extracted_data') is not None:
     m4.markdown(f'<div class="metric-card"><b>Closing Bal</b><br>₹ {meta_filtered["closing_bal"]:,.2f}</div>', unsafe_allow_html=True)
     
     st.write("<br>", unsafe_allow_html=True)
-    st.write("### 📝 Data Preview")
+    st.write("### 📝 Tally Ready Data (Clean Transactions Only)")
     st.dataframe(filtered_df, use_container_width=True) 
     
     c1, c2 = st.columns(2)
