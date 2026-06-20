@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import pdfplumber
-import PyPDF2
 import io
 import re
 import datetime
@@ -16,19 +15,16 @@ if 'cleaned_data' not in st.session_state:
 
 st.set_page_config(page_title="Alpha BizOps Hub", page_icon="🏦", layout="wide")
 
-st.markdown("""
-    <style>
-    .hero-title { font-size: 38px; font-weight: 800; color: #1E3A8A; text-align: center; margin-bottom: 5px;}
-    .hero-subtitle { font-size: 16px; color: #4B5563; text-align: center; margin-bottom: 30px;}
-    .metric-card { background-color: #F3F4F6; padding: 15px; border-radius: 8px; text-align: center; border: 1px solid #E5E7EB; box-shadow: 2px 2px 5px rgba(0,0,0,0.05); }
-    </style>
-""", unsafe_allow_html=True)
+css1 = ".hero-title { font-size: 38px; font-weight: 800; color: #1E3A8A; text-align: center; margin-bottom: 5px;}"
+css2 = ".hero-subtitle { font-size: 16px; color: #4B5563; text-align: center; margin-bottom: 30px;}"
+css3 = ".metric-card { background-color: #F3F4F6; padding: 15px; border-radius: 8px; text-align: center; border: 1px solid #E5E7EB; box-shadow: 2px 2px 5px rgba(0,0,0,0.05); }"
+st.markdown(f"<style>{css1} {css2} {css3}</style>", unsafe_allow_html=True)
 
 st.markdown('<div class="hero-title">🏦 BANK STATEMENT TO TALLY EXCEL</div>', unsafe_allow_html=True)
 st.markdown('<div class="hero-subtitle">100% Accurate Data Extraction | Smart Auto-Unlock | Universal Format</div>', unsafe_allow_html=True)
 
 # ==========================================
-# 2. SMART PASSWORD ENGINE (INDIAN BANKS)
+# 2. SMART PASSWORD ENGINE
 # ==========================================
 def generate_bank_passwords(name, dob, pan, custom_pwd):
     passwords = []
@@ -44,13 +40,9 @@ def generate_bank_passwords(name, dob, pan, custom_pwd):
         if name:
             name_clean = re.sub(r'[^a-zA-Z]', '', name)
             if len(name_clean) >= 4:
-                first_4_lower = name_clean[:4].lower()
-                first_4_upper = name_clean[:4].upper()
-                passwords.extend([
-                    f"{first_4_lower}{d_str}{m_str}",
-                    f"{first_4_upper}{d_str}{m_str}",
-                    f"{first_4_lower}{d_str}{m_str}{y_full}"
-                ])
+                f4l = name_clean[:4].lower()
+                f4u = name_clean[:4].upper()
+                passwords.extend([f"{f4l}{d_str}{m_str}", f"{f4u}{d_str}{m_str}", f"{f4l}{d_str}{m_str}{y_full}"])
                 
     if pan:
         passwords.extend([pan.lower().strip(), pan.upper().strip()])
@@ -58,67 +50,59 @@ def generate_bank_passwords(name, dob, pan, custom_pwd):
     return list(set(passwords))
 
 # ==========================================
-# 3. BACKEND: PDF PARSER WITH PyPDF2 BYPASS
+# 3. BACKEND: PDF PARSER (Maa Baap Logic)
 # ==========================================
 def process_mathematical_parser(file, password_list):
     raw_transactions = []
-    pdf_bytes = file.read()
     file.seek(0)
+    pdf_bytes = file.read()
     
-    unlocked_pdf_stream = None
+    matched_pwd = None
+    is_locked = False
     
-    # ⚡ ENGINE 1: PyPDF2 SECURITY BYPASS (Restored to your original)
+    # ⚡ ENGINE 1: NATIVE PDFPLUMBER UNLOCK (No Text Corruption)
     try:
-        temp_stream = io.BytesIO(pdf_bytes)
-        pdf_reader = PyPDF2.PdfReader(temp_stream)
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as test_pdf:
+            pass
+    except Exception:
+        is_locked = True
         
-        if pdf_reader.is_encrypted:
-            unlocked = False
-            for pwd in password_list:
-                if not pwd: 
-                    continue
-                try:
-                    if pdf_reader.decrypt(pwd): 
-                        unlocked = True
-                        break
-                except Exception:
-                    continue
-            
-            if not unlocked:
-                return None, "PDF is locked. Auto-Unlock failed. Please provide exact Password/PAN/DOB."
-            
-            pdf_writer = PyPDF2.PdfWriter()
-            for page in pdf_reader.pages:
-                pdf_writer.add_page(page)
-            
-            unlocked_pdf_stream = io.BytesIO()
-            pdf_writer.write(unlocked_pdf_stream)
-            unlocked_pdf_stream.seek(0)
-        else:
-            unlocked_pdf_stream = io.BytesIO(pdf_bytes)
-            
-    except Exception as e:
-        return None, f"Decryption Engine Error: {str(e)}"
+    if is_locked:
+        unlocked = False
+        for pwd in password_list:
+            if not pwd: continue
+            try:
+                with pdfplumber.open(io.BytesIO(pdf_bytes), password=pwd) as test_pdf:
+                    pass
+                unlocked = True
+                matched_pwd = pwd
+                break
+            except Exception:
+                continue
+                
+        if not unlocked:
+            return None, "PDF is locked. Auto-Unlock failed. Please provide exact Password/PAN/DOB."
 
-    # ⚡ ENGINE 2: PDFPLUMBER EXTRACTION WITH GOD-MODE REGEX
+    # ⚡ ENGINE 2: EXACT ORIGINAL EXTRACTION LOGIC
     try:
-        with pdfplumber.open(unlocked_pdf_stream) as pdf:
-            date_pattern = re.compile(r'^\s*(\d{1,2}[\s/\-\.]{1,3}(?:[a-zA-Z]{3,10}|\d{1,2})[\s/\-\.]{1,3}\d{2,4})')
+        pdf_mem = io.BytesIO(pdf_bytes)
+        with pdfplumber.open(pdf_mem, password=matched_pwd) as pdf:
+            
+            # Fix: ^\s* removed to capture dates ANYWHERE in the line
+            dt_regex = r'(\d{1,2}[\s/\-\.]{1,3}(?:[a-zA-Z]{3,10}|\d{1,2})[\s/\-\.]{1,3}\d{2,4})'
+            date_pattern = re.compile(dt_regex)
 
             for page in pdf.pages:
                 text = page.extract_text(layout=True)
-                if not text: 
-                    text = page.extract_text()
-                if not text: 
-                    continue
+                if not text: text = page.extract_text()
+                if not text: continue
                 
                 lines = text.split('\n')
-
                 current_txn = None
+                
                 for line in lines:
                     line = line.strip()
-                    if not line: 
-                        continue
+                    if not line: continue
 
                     match = date_pattern.search(line)
                     if match:
@@ -130,11 +114,12 @@ def process_mathematical_parser(file, password_list):
                         date_str = re.sub(r'/+', '/', date_str)
                         
                         rem = line[len(match.group(0)):].strip()
-
                         parts = rem.split()
+                        
                         numbers = []
                         narration_words = []
 
+                        # YOUR ORIGINAL LOGIC
                         for part in parts:
                             cl_part = part.replace(',', '').replace('Cr', '').replace('Dr', '').replace('cr', '').replace('dr', '').strip()
                             if re.match(r'^-?\d+(\.\d+)?$', cl_part):
@@ -168,6 +153,7 @@ def process_mathematical_parser(file, password_list):
         if not raw_transactions:
             return None, "Document unlocked, but no transactions found. Bank format might be unsupported or it's a scanned photo."
 
+        # YOUR EXACT ORIGINAL MATH LOGIC
         for i in range(len(raw_transactions)):
             curr = raw_transactions[i]
             if i > 0:
@@ -185,7 +171,8 @@ def process_mathematical_parser(file, password_list):
                     curr["Credit"] = curr["Amount"] if curr["Amount"] > 0 else 0.0
             else:
                 narration_upper = curr["Narration"].upper()
-                if any(kw in narration_upper for kw in ["RTGS", "NEFT", "UPI", "IMPS", "CHQ", "ATM", "WITHDRAW", "DR", "DEBIT"]):
+                chk_kws = ["RTGS", "NEFT", "UPI", "IMPS", "CHQ", "ATM", "WITHDRAW", "DR", "DEBIT"]
+                if any(kw in narration_upper for kw in chk_kws):
                     curr["Debit"] = curr["Amount"]
                 else:
                     curr["Credit"] = curr["Amount"]
@@ -267,91 +254,3 @@ if uploaded_file:
     with col1: client_name = st.text_input("First Name (e.g. Rahul)", help="Required for ICICI/Axis")
     with col2: client_dob = st.date_input("Date of Birth", value=None, help="Required for SBI/ICICI")
     with col3: client_pan = st.text_input("PAN Number", help="Required for HDFC/Axis")
-    with col4: custom_pwd = st.text_input("Or exact Password/CRN", type="password")
-    
-    if st.button("🚀 Process & Extract Data", use_container_width=True):
-        with st.spinner("Decoding Document & Extracting Data... please wait"):
-            
-            passwords_to_try = generate_bank_passwords(client_name, client_dob, client_pan, custom_pwd)
-            
-            if uploaded_file.name.endswith('.pdf'): 
-                raw_data, status = process_mathematical_parser(uploaded_file, passwords_to_try)
-            else: 
-                raw_data, status = process_excel_parser(uploaded_file)
-            
-            if raw_data is not None:
-                if len(raw_data) > 0:
-                    df = pd.DataFrame(raw_data)
-                    df_tally_ready = df[['Date', 'Narration', 'Debit', 'Credit', 'Balance']]
-                    st.session_state['raw_extracted_data'] = df_tally_ready.copy()
-                else:
-                    st.error("❌ Error: Document unlocked, but no transactions found. Format might be unreadable or a scanned photo.")
-            else:
-                st.error(f"❌ Error: {status}")
-
-# ==========================================
-# 6. UI: DATE FILTER & DASHBOARD
-# ==========================================
-if st.session_state.get('raw_extracted_data') is not None:
-    full_df = st.session_state['raw_extracted_data'].copy()
-    
-    st.write("---")
-    st.markdown("### 📅 Select Specific Dates for Tally")
-    
-    full_df['Date_Obj'] = pd.to_datetime(full_df['Date'], errors='coerce', dayfirst=True)
-    valid_dates = full_df.dropna(subset=['Date_Obj'])
-    
-    if not valid_dates.empty:
-        min_date = valid_dates['Date_Obj'].min().date()
-        max_date = valid_dates['Date_Obj'].max().date()
-    else:
-        min_date = datetime.date(2023, 4, 1)
-        max_date = datetime.date.today()
-        
-    c1, c2 = st.columns(2)
-    with c1: from_date = st.date_input("From Date:", value=min_date)
-    with c2: to_date = st.date_input("To Date:", value=max_date)
-    
-    mask = (full_df['Date_Obj'].dt.date >= from_date) & (full_df['Date_Obj'].dt.date <= to_date)
-    filtered_df = full_df.loc[mask].copy()
-    
-    if filtered_df.empty:
-        st.warning("⚠️ Warning: No transactions found for these dates. Showing all data.")
-        filtered_df = full_df.copy()
-        
-    filtered_df = filtered_df.drop(columns=['Date_Obj'], errors='ignore')
-    
-    meta_filtered = {"opening_bal": 0.0, "closing_bal": 0.0, "debit_count": 0, "credit_count": 0, "total_debit_amt": 0.0, "total_credit_amt": 0.0}
-    if not filtered_df.empty:
-        # Line broken into variables to prevent Streamlit editor truncation crash
-        first_row = filtered_df.iloc[0]
-        meta_filtered["opening_bal"] = first_row['Balance'] - first_row['Credit'] + first_row['Debit']
-        meta_filtered["closing_bal"] = filtered_df.iloc[-1]['Balance']
-        meta_filtered["debit_count"] = (filtered_df['Debit'] > 0).sum()
-        meta_filtered["credit_count"] = (filtered_df['Credit'] > 0).sum()
-        meta_filtered["total_debit_amt"] = filtered_df['Debit'].sum()
-        meta_filtered["total_credit_amt"] = filtered_df['Credit'].sum()
-    
-    st.session_state['cleaned_data'] = filtered_df.copy()
-    
-    st.success("✅ Data Ready! The table and exports below are automatically updated.")
-    
-    m1, m2, m3, m4 = st.columns(4)
-    m1.markdown(f'<div class="metric-card"><b>Opening Bal</b><br>₹ {meta_filtered["opening_bal"]:,.2f}</div>', unsafe_allow_html=True)
-    m2.markdown(f'<div class="metric-card"><b>Total Debits (-)</b><br>₹ {meta_filtered["total_debit_amt"]:,.2f}<br><span style="font-size:13px; color:#6B7280;">({meta_filtered["debit_count"]} Txns)</span></div>', unsafe_allow_html=True)
-    m3.markdown(f'<div class="metric-card"><b>Total Credits (+)</b><br>₹ {meta_filtered["total_credit_amt"]:,.2f}<br><span style="font-size:13px; color:#6B7280;">({meta_filtered["credit_count"]} Txns)</span></div>', unsafe_allow_html=True)
-    m4.markdown(f'<div class="metric-card"><b>Closing Bal</b><br>₹ {meta_filtered["closing_bal"]:,.2f}</div>', unsafe_allow_html=True)
-    
-    st.write("<br>", unsafe_allow_html=True)
-    st.write("### 📝 Data Preview")
-        
-    st.dataframe(filtered_df, use_container_width=True) 
-    
-    c1, c2 = st.columns(2)
-    
-    # Download lines broken down to prevent truncation
-    csv_bytes = filtered_df.to_csv(index=False).encode('utf-8')
-    c1.download_button("Download CSV", csv_bytes, "alpha_tally_ready.csv", "text/csv", use_container_width=True)
-    
-    excel_bytes = to_excel(filtered_df)
-    c2.download_button("Download Excel (.xlsx)", excel_bytes, "alpha_tally_ready.xlsx", use_container_width=True)
