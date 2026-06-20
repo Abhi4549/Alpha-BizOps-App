@@ -54,7 +54,7 @@ def parse_pdf(file, pwd_list):
     txns = []
     file.seek(0)
     pdf_bytes = file.read()
-    match_pwd = '' 
+    match_pwd = None 
     
     try:
         temp_mem = io.BytesIO(pdf_bytes)
@@ -77,8 +77,10 @@ def parse_pdf(file, pwd_list):
 
     try:
         pdf_mem = io.BytesIO(pdf_bytes)
+        # Pass None if no password is required for Unlocked PDFs
         with pdfplumber.open(pdf_mem, password=match_pwd) as pdf:
-            dt_reg = r'^\s*(\d{1,2}[\s/\-\.]{1,3}(?:[a-zA-Z]{3,10}|\d{1,2})[\s/\-\.]{1,3}\d{2,4})'
+            # ⚡ FIX: Removed ^\s* so it catches dates ANYWHERE in the line
+            dt_reg = r'(\d{1,2}[\s/\-\.]{1,3}(?:[a-zA-Z]{3,10}|\d{1,2})[\s/\-\.]{1,3}\d{2,4})'
             dt_pat = re.compile(dt_reg)
 
             ig_kws = ['opening balance', 'closing balance', 'page total']
@@ -271,107 +273,4 @@ def parse_excel(file):
         return None, f"Excel Error: {str(e)}"
 
 def make_excel(df):
-    out = io.BytesIO()
-    with pd.ExcelWriter(out, engine='openpyxl') as w:
-        df.to_excel(w, index=False, sheet_name='TallyData')
-    return out.getvalue()
-
-# ==========================================
-# 5. UI BLOCK
-# ==========================================
-file_up = st.file_uploader("Upload Statement", type=['pdf', 'xlsx', 'csv'])
-
-if file_up:
-    st.markdown("### 🔐 Smart Unlock")
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: c_name = st.text_input("Name")
-    with c2: c_dob = st.date_input("DOB", value=None)
-    with c3: c_pan = st.text_input("PAN")
-    with c4: c_pwd = st.text_input("Password", type="password")
-    
-    if st.button("🚀 Extract Data", use_container_width=True):
-        with st.spinner("Processing..."):
-            
-            pwds = get_pwds(c_name, c_dob, c_pan, c_pwd)
-            
-            # SHORT LINES FIX FOR SYNTAX ERROR
-            is_pdf = file_up.name.endswith('.pdf')
-            if is_pdf:
-                res = parse_pdf(file_up, pwds)
-            else:
-                res = parse_excel(file_up)
-                
-            data = res[0]
-            stat = res[1]
-            
-            if data is not None:
-                if len(data) > 0:
-                    df = pd.DataFrame(data)
-                    st.session_state['raw_data'] = df.copy()
-                else:
-                    st.error("❌ No transactions found.")
-            else:
-                st.error(f"❌ Error: {stat}")
-
-# ==========================================
-# 6. DASHBOARD
-# ==========================================
-if st.session_state.get('raw_data') is not None:
-    f_df = st.session_state['raw_data'].copy()
-    
-    st.write("---")
-    st.markdown("### 📅 Select Dates")
-    
-    f_df['D_Obj'] = pd.to_datetime(f_df['Date'], errors='coerce', dayfirst=True)
-    v_dates = f_df.dropna(subset=['D_Obj'])
-    
-    if not v_dates.empty:
-        min_d = v_dates['D_Obj'].min().date()
-        max_d = v_dates['D_Obj'].max().date()
-    else:
-        min_d = datetime.date(2023, 4, 1)
-        max_d = datetime.date.today()
-        
-    c1, c2 = st.columns(2)
-    with c1: dt_from = st.date_input("From:", value=min_d)
-    with c2: dt_to = st.date_input("To:", value=max_d)
-    
-    mask = (f_df['D_Obj'].dt.date >= dt_from) & (f_df['D_Obj'].dt.date <= dt_to)
-    flt_df = f_df.loc[mask].copy()
-    
-    if flt_df.empty:
-        st.warning("⚠️ No data for these dates.")
-        flt_df = f_df.copy()
-        
-    flt_df = flt_df.drop(columns=['D_Obj'], errors='ignore')
-    
-    if not flt_df.empty:
-        op_bal = flt_df.iloc[0]['Balance'] - flt_df.iloc[0]['Credit'] + flt_df.iloc[0]['Debit']
-        cl_bal = flt_df.iloc[-1]['Balance']
-        dr_c = (flt_df['Debit'] > 0).sum()
-        cr_c = (flt_df['Credit'] > 0).sum()
-        dr_amt = flt_df['Debit'].sum()
-        cr_amt = flt_df['Credit'].sum()
-    else:
-        op_bal=cl_bal=dr_c=cr_c=dr_amt=cr_amt=0.0
-    
-    st.success("✅ Data Extracted Successfully.")
-    
-    m1, m2, m3, m4 = st.columns(4)
-    h1 = f'<div class="metric-card"><b>Open</b><br>₹ {op_bal:,.2f}</div>'
-    h2 = f'<div class="metric-card"><b>Debit</b><br>₹ {dr_amt:,.2f}</div>'
-    h3 = f'<div class="metric-card"><b>Credit</b><br>₹ {cr_amt:,.2f}</div>'
-    h4 = f'<div class="metric-card"><b>Close</b><br>₹ {cl_bal:,.2f}</div>'
-    
-    m1.markdown(h1, unsafe_allow_html=True)
-    m2.markdown(h2, unsafe_allow_html=True)
-    m3.markdown(h3, unsafe_allow_html=True)
-    m4.markdown(h4, unsafe_allow_html=True)
-    
-    st.dataframe(flt_df, use_container_width=True) 
-    
-    d1, d2 = st.columns(2)
-    csv_str = flt_df.to_csv(index=False).encode('utf-8')
-    d1.download_button("Download CSV", csv_str, "tally.csv", "text/csv", use_container_width=True)
-    xl_str = make_excel(flt_df)
-    d2
+    out = io
