@@ -70,7 +70,7 @@ def process_mathematical_parser(file, password_list):
     try:
         file.seek(0)
         with pdfplumber.open(file, password=matched_password) as pdf:
-            # Strict date regex to avoid matching generic numbers as dates
+            # Strict date regex
             date_pattern = re.compile(r'(\d{1,2}[\s/\-\.]{1,3}(?:[a-zA-Z]{3,10}|\d{1,2})[\s/\-\.]{1,3}\d{2,4})')
             
             ignore_kws = [
@@ -104,19 +104,15 @@ def process_mathematical_parser(file, password_list):
                         rem = line[len(match.group(0)):].strip()
                         parts = rem.split()
                         
-                        # ⚡ HIGH PRECISION EXTRACTION TECHNIQUE
-                        # Extract valid floats only from the RIGHT side of the string (where amounts live)
+                        # ⚡ RIGHT-TO-LEFT SCANNING (Blocks Cheque Number shifting)
                         numbers = []
                         narration_words = []
                         
-                        # Process tokens backwards to separate right-side financial numbers from left-side narration codes
                         for part in reversed(parts):
                             cl_part = part.replace(',', '').replace('Cr', '').replace('Dr', '')
                             cl_part = cl_part.replace('cr', '').replace('dr', '').strip()
                             
-                            # Valid amount check: standard decimal pattern
                             if re.match(r'^\d+(\.\d+)?$', cl_part) and len(numbers) < 3:
-                                # Avoid capturing transaction IDs or serial IDs like 002139
                                 if cl_part.startswith('0') and '.' not in cl_part and len(cl_part) >= 4:
                                     narration_words.insert(0, part)
                                 else:
@@ -125,15 +121,11 @@ def process_mathematical_parser(file, password_list):
                                 narration_words.insert(0, part)
                         
                         line_lower = line.lower()
-                        # Strict line qualification rule
                         if len(numbers) >= 1 and not any(kw in line_lower for kw in ignore_kws):
-                            # Save the completed transaction before initializing a new one (Prevents Double Entry)
-                            if current_txn:
+                            if current_txn: 
                                 raw_transactions.append(current_txn)
-                            
-                            # The absolute last number on the right is ALWAYS the Balance
+                                
                             balance = numbers[-1]
-                            # The second last number is the transaction Amount
                             txn_amount = numbers[-2] if len(numbers) >= 2 else 0.0
                             
                             current_txn = {
@@ -145,7 +137,6 @@ def process_mathematical_parser(file, password_list):
                                 "Credit": 0.0
                             }
                     else:
-                        # Multi-line narration handler without bleeding data structures
                         if current_txn and len(line) > 2:
                             chk_kws = ['page', 'balance', 'total', 'statement', 'branch', 'opening', 'closing']
                             if not any(ig in line.lower() for ig in chk_kws):
@@ -153,21 +144,20 @@ def process_mathematical_parser(file, password_list):
                                 if clean_parts:
                                     current_txn["Narration"] += " " + " ".join(clean_parts)
                                     
-            # Append the absolute final record
             if current_txn: 
                 raw_transactions.append(current_txn)
 
         if not raw_transactions: 
             return None, "No transactions found. Format might be unreadable."
 
-        # ⚡ 100% PERFECT MATHEMATICAL LEDGER ALIGNMENT (NO DATA MIXING)
+        # ⚡ 100% PERFECT MATH ENGINE (Withdraw/Debit = Minus | Deposit/Credit = Plus)
         cleaned_final_ledger = []
         seen_entries = set()
         
         for i in range(len(raw_transactions)):
             curr = raw_transactions[i]
             
-            # De-duplication check to completely kill double entries
+            # Double Entry Protection
             entry_fingerprint = f"{curr['Date']}_{curr['Balance']}_{curr['Amount']}_{curr['Narration'][:20]}"
             if entry_fingerprint in seen_entries:
                 continue
@@ -178,10 +168,11 @@ def process_mathematical_parser(file, password_list):
                 curr_bal = curr["Balance"]
                 diff = round(curr_bal - prev_bal, 2)
                 
-                # Debit-Credit routing completely decoupled from string detection
+                # Logic: Agar balance badha (diff > 0), toh woh Deposit (Credit) hai
                 if diff > 0:
                     curr["Credit"] = curr["Amount"] if curr["Amount"] > 0 else abs(diff)
                     curr["Debit"] = 0.0
+                # Logic: Agar balance ghata (diff < 0), toh woh Withdraw (Debit) hai
                 elif diff < 0:
                     curr["Debit"] = curr["Amount"] if curr["Amount"] > 0 else abs(diff)
                     curr["Credit"] = 0.0
@@ -189,7 +180,7 @@ def process_mathematical_parser(file, password_list):
                     curr["Credit"] = curr["Amount"] if curr["Amount"] > 0 else 0.0
                     curr["Debit"] = 0.0
             else:
-                # Core default handling for structural line index 0
+                # First transaction rule
                 if any(kw in curr["Narration"].upper() for kw in ["RTGS", "NEFT", "UPI", "IMPS", "CHQ", "ATM", "WITHDRAW", "DR", "DEBIT"]): 
                     curr["Debit"] = curr["Amount"]
                     curr["Credit"] = 0.0
@@ -356,12 +347,12 @@ if st.session_state.get('raw_extracted_data') is not None:
         meta_filtered["total_credit_amt"] = filtered_df['Credit'].sum()
     
     st.session_state['cleaned_data'] = filtered_df.copy()
-    st.success("✅ Architecture Fixed! Double Entries blocked and columns stabilized permanently.")
+    st.success("✅ Logic Fixed: Withdraw -> Debit (-), Deposit -> Credit (+) with Double Entry Protection.")
     
     m1, m2, m3, m4 = st.columns(4)
     m1.markdown(f'<div class="metric-card"><b>Opening Bal</b><br>₹ {meta_filtered["opening_bal"]:,.2f}</div>', unsafe_allow_html=True)
-    m2.markdown(f'<div class="metric-card"><b>Total Debits (-)</b><br>₹ {meta_filtered["total_debit_amt"]:,.2f}<br><span style="font-size:13px; color:#6B7280;">({meta_filtered["debit_count"]} Txns)</span></div>', unsafe_allow_html=True)
-    m3.markdown(f'<div class="metric-card"><b>Total Credits (+)</b><br>₹ {meta_filtered["total_credit_amt"]:,.2f}<br><span style="font-size:13px; color:#6B7280;">({meta_filtered["credit_count"]} Txns)</span></div>', unsafe_allow_html=True)
+    m2.markdown(f'<div class="metric-card"><b>Total Withdraw/Debit (-)</b><br>₹ {meta_filtered["total_debit_amt"]:,.2f}<br><span style="font-size:13px; color:#6B7280;">({meta_filtered["debit_count"]} Txns)</span></div>', unsafe_allow_html=True)
+    m3.markdown(f'<div class="metric-card"><b>Total Deposit/Credit (+)</b><br>₹ {meta_filtered["total_credit_amt"]:,.2f}<br><span style="font-size:13px; color:#6B7280;">({meta_filtered["credit_count"]} Txns)</span></div>', unsafe_allow_html=True)
     m4.markdown(f'<div class="metric-card"><b>Closing Bal</b><br>₹ {meta_filtered["closing_bal"]:,.2f}</div>', unsafe_allow_html=True)
     
     st.write("<br>", unsafe_allow_html=True)
