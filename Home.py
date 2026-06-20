@@ -696,4 +696,5 @@ if st.session_state.get('raw_extracted_data') is not None:
 
     c1.download_button("Download CSV", filtered_df.to_csv(index=False).encode('utf-8'), "alpha_tally_ready.csv", "text/csv", use_container_width=True)
 
-    c2.download_button("Download Excel (.xlsx)", to_excel(filtered_df), "alpha_tally_ready.xlsx", use_container_width=True)
+    c2.download_button("Download Excel (.xlsx)", to_excel(filtered_df), "alpha_tally_ready.xlsx", use_container_width=True) 
+
