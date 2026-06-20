@@ -65,9 +65,9 @@ def process_mathematical_parser(file, password_list):
     pdf_bytes = file.read()
     file.seek(0)
     
-    unlocked_pdf_stream = None
+    matched_password = '' # Store exact password
     
-    # ⚡ ENGINE 1: PyPDF2 SECURITY BYPASS
+    # ⚡ ENGINE 1: PASSWORD DETECTION ONLY (NO PDF RE-WRITING)
     try:
         temp_stream = io.BytesIO(pdf_bytes)
         pdf_reader = PyPDF2.PdfReader(temp_stream)
@@ -80,29 +80,22 @@ def process_mathematical_parser(file, password_list):
                 try:
                     if pdf_reader.decrypt(pwd): 
                         unlocked = True
+                        matched_password = pwd
                         break
                 except Exception:
                     continue
             
             if not unlocked:
                 return None, "PDF is locked. Auto-Unlock failed. Please provide exact Password/PAN/DOB."
-            
-            pdf_writer = PyPDF2.PdfWriter()
-            for page in pdf_reader.pages:
-                pdf_writer.add_page(page)
-            
-            unlocked_pdf_stream = io.BytesIO()
-            pdf_writer.write(unlocked_pdf_stream)
-            unlocked_pdf_stream.seek(0)
-        else:
-            unlocked_pdf_stream = io.BytesIO(pdf_bytes)
-            
+                
     except Exception as e:
         return None, f"Decryption Engine Error: {str(e)}"
 
     # ⚡ ENGINE 2: PDFPLUMBER EXTRACTION WITH GOD-MODE REGEX
     try:
-        with pdfplumber.open(unlocked_pdf_stream) as pdf:
+        original_pdf_stream = io.BytesIO(pdf_bytes)
+        # Passing password directly avoids layout corruption!
+        with pdfplumber.open(original_pdf_stream, password=matched_password) as pdf:
             date_pattern = re.compile(r'^\s*(\d{1,2}[\s/\-\.]{1,3}(?:[a-zA-Z]{3,10}|\d{1,2})[\s/\-\.]{1,3}\d{2,4})')
 
             for page in pdf.pages:
@@ -298,53 +291,4 @@ if st.session_state.get('raw_extracted_data') is not None:
     st.write("---")
     st.markdown("### 📅 Select Specific Dates for Tally")
     
-    full_df['Date_Obj'] = pd.to_datetime(full_df['Date'], errors='coerce', dayfirst=True)
-    valid_dates = full_df.dropna(subset=['Date_Obj'])
-    
-    if not valid_dates.empty:
-        min_date = valid_dates['Date_Obj'].min().date()
-        max_date = valid_dates['Date_Obj'].max().date()
-    else:
-        min_date = datetime.date(2023, 4, 1)
-        max_date = datetime.date.today()
-        
-    c1, c2 = st.columns(2)
-    with c1: from_date = st.date_input("From Date:", value=min_date)
-    with c2: to_date = st.date_input("To Date:", value=max_date)
-    
-    mask = (full_df['Date_Obj'].dt.date >= from_date) & (full_df['Date_Obj'].dt.date <= to_date)
-    filtered_df = full_df.loc[mask].copy()
-    
-    if filtered_df.empty:
-        st.warning("⚠️ Warning: No transactions found for these dates. Showing all data.")
-        filtered_df = full_df.copy()
-        
-    filtered_df = filtered_df.drop(columns=['Date_Obj'], errors='ignore')
-    
-    meta_filtered = {"opening_bal": 0.0, "closing_bal": 0.0, "debit_count": 0, "credit_count": 0, "total_debit_amt": 0.0, "total_credit_amt": 0.0}
-    if not filtered_df.empty:
-        meta_filtered["opening_bal"] = filtered_df.iloc[0]['Balance'] - filtered_df.iloc[0]['Credit'] + filtered_df.iloc[0]['Debit']
-        meta_filtered["closing_bal"] = filtered_df.iloc[-1]['Balance']
-        meta_filtered["debit_count"] = (filtered_df['Debit'] > 0).sum()
-        meta_filtered["credit_count"] = (filtered_df['Credit'] > 0).sum()
-        meta_filtered["total_debit_amt"] = filtered_df['Debit'].sum()
-        meta_filtered["total_credit_amt"] = filtered_df['Credit'].sum()
-    
-    st.session_state['cleaned_data'] = filtered_df.copy()
-    
-    st.success("✅ Data Ready! The table and exports below are automatically updated.")
-    
-    m1, m2, m3, m4 = st.columns(4)
-    m1.markdown(f'<div class="metric-card"><b>Opening Bal</b><br>₹ {meta_filtered["opening_bal"]:,.2f}</div>', unsafe_allow_html=True)
-    m2.markdown(f'<div class="metric-card"><b>Total Debits (-)</b><br>₹ {meta_filtered["total_debit_amt"]:,.2f}<br><span style="font-size:13px; color:#6B7280;">({meta_filtered["debit_count"]} Txns)</span></div>', unsafe_allow_html=True)
-    m3.markdown(f'<div class="metric-card"><b>Total Credits (+)</b><br>₹ {meta_filtered["total_credit_amt"]:,.2f}<br><span style="font-size:13px; color:#6B7280;">({meta_filtered["credit_count"]} Txns)</span></div>', unsafe_allow_html=True)
-    m4.markdown(f'<div class="metric-card"><b>Closing Bal</b><br>₹ {meta_filtered["closing_bal"]:,.2f}</div>', unsafe_allow_html=True)
-    
-    st.write("<br>", unsafe_allow_html=True)
-    st.write("### 📝 Data Preview")
-        
-    st.dataframe(filtered_df, use_container_width=True) 
-    
-    c1, c2 = st.columns(2)
-    c1.download_button("Download CSV", filtered_df.to_csv(index=False).encode('utf-8'), "alpha_tally_ready.csv", "text/csv", use_container_width=True)
-    c2.download_button("Download Excel (.xlsx)", to_excel(filtered_df), "alpha_tally_ready.xlsx", use_container_width=True)
+    full_df['Date_Obj'] = pd.to_datetime(full_df['Date'], errors='coerce', dayfirst=True
