@@ -59,14 +59,14 @@ def generate_bank_passwords(name, dob, pan, custom_pwd):
     return list(set(passwords))
 
 # ==========================================
-# 3. BACKEND: PDF PARSER WITH PyPDF2 BYPASS
+# 3. BACKEND: SUPERCHARGED PDF PARSER
 # ==========================================
 def process_mathematical_parser(file, password_list):
     raw_transactions = []
     pdf_bytes = file.read()
     file.seek(0)
     
-    matched_password = ''
+    matched_password = '' 
     
     # ⚡ ENGINE 1: PASSWORD DETECTION ONLY (NO PDF RE-WRITING)
     try:
@@ -98,6 +98,13 @@ def process_mathematical_parser(file, password_list):
         with pdfplumber.open(original_pdf_stream, password=matched_password) as pdf:
             date_pattern = re.compile(r'^\s*(\d{1,2}[\s/\-\.]{1,3}(?:[a-zA-Z]{3,10}|\d{1,2})[\s/\-\.]{1,3}\d{2,4})')
 
+            ignore_kws = [
+                'opening balance', 'closing balance', 'brought forward', 
+                'carried forward', 'total debits', 'total credits', 
+                'statement period', 'generated on', 'page total', 
+                'grand total', 'summary of', 'closing bal', 'opening bal'
+            ]
+
             for page in pdf.pages:
                 text = page.extract_text(layout=True)
                 if not text: 
@@ -119,112 +126,3 @@ def process_mathematical_parser(file, password_list):
                             raw_transactions.append(current_txn)
 
                         raw_date_str = match.group(1)
-                        date_str = re.sub(r'[\s\.\-]', '/', raw_date_str)
-                        date_str = re.sub(r'/+', '/', date_str)
-                        
-                        rem = line[len(match.group(0)):].strip()
-
-                        parts = rem.split()
-                        numbers = []
-                        narration_words = []
-
-                        for part in parts:
-                            cl_part = part.replace(',', '').replace('Cr', '').replace('Dr', '')
-                            cl_part = cl_part.replace('cr', '').replace('dr', '').strip()
-                            
-                            if re.match(r'^-?\d+(\.\d+)?$', cl_part):
-                                if cl_part.startswith('0') and '.' not in cl_part and len(cl_part) >= 4:
-                                    narration_words.append(part)
-                                else:
-                                    numbers.append(float(cl_part))
-                            else:
-                                narration_words.append(part)
-
-                        narration = " ".join(narration_words)
-
-                        balance = 0.0
-                        txn_amount = 0.0
-                        if len(numbers) >= 1: 
-                            balance = numbers[-1] 
-                        if len(numbers) >= 2: 
-                            txn_amount = numbers[-2] 
-
-                        current_txn = {
-                            "Date": date_str, 
-                            "Narration": narration, 
-                            "Amount": txn_amount, 
-                            "Balance": balance, 
-                            "Debit": 0.0, 
-                            "Credit": 0.0
-                        }
-
-                    else:
-                        if current_txn and len(line) > 2:
-                            ignore_words = ['page', 'balance', 'total', 'statement', 'branch', 'opening', 'closing', 'brought forward']
-                            if not any(ig in line.lower() for ig in ignore_words):
-                                clean_parts = [p for p in line.split() if not re.match(r'^-?\d+(\.\d+)?$', p.replace(',',''))]
-                                if clean_parts: 
-                                    current_txn["Narration"] += " " + " ".join(clean_parts)
-
-                if current_txn: 
-                    raw_transactions.append(current_txn)
-
-        if not raw_transactions:
-            return None, "Document unlocked, but no transactions found. Bank format might be unsupported or it's a scanned photo."
-
-        for i in range(len(raw_transactions)):
-            curr = raw_transactions[i]
-            if i > 0:
-                prev_bal = raw_transactions[i-1]["Balance"]
-                curr_bal = curr["Balance"]
-                diff = round(curr_bal - prev_bal, 2)
-
-                if diff > 0:
-                    curr["Credit"] = diff
-                    curr["Debit"] = 0.0
-                elif diff < 0:
-                    curr["Debit"] = abs(diff)
-                    curr["Credit"] = 0.0
-                else:
-                    curr["Credit"] = curr["Amount"] if curr["Amount"] > 0 else 0.0
-            else:
-                narration_upper = curr["Narration"].upper()
-                if any(kw in narration_upper for kw in ["RTGS", "NEFT", "UPI", "IMPS", "CHQ", "ATM", "WITHDRAW", "DR", "DEBIT"]):
-                    curr["Debit"] = curr["Amount"]
-                else:
-                    curr["Credit"] = curr["Amount"]
-
-        return raw_transactions, "Success"
-    except Exception as e: 
-        return None, f"Parsing Error: {str(e)}"
-
-# ==========================================
-# 4. EXCEL CSV PARSER
-# ==========================================
-def process_excel_parser(file):
-    raw_transactions = []
-    try:
-        if file.name.endswith('.csv'): 
-            df = pd.read_csv(file, skip_blank_lines=True)
-        else: 
-            df = pd.read_excel(file)
-            
-        df.dropna(how='all', inplace=True)
-        df.dropna(axis=1, how='all', inplace=True)
-        df = df.reset_index(drop=True)
-        
-        header_idx = -1
-        for i in range(min(20, len(df))):
-            row_str = ' '.join(str(x).lower() for x in df.iloc[i].values)
-            if 'date' in row_str and ('narration' in row_str or 'particulars' in row_str or 'description' in row_str):
-                header_idx = i
-                break
-                
-        if header_idx != -1:
-            df.columns = df.iloc[header_idx]
-            df = df.iloc[header_idx+1:].reset_index(drop=True)
-            
-        df.columns = [str(c).strip().lower() for c in df.columns]
-        cols = df.columns
-        date_col = next((c for c in cols if 'date' in c), None)
-        narration_col = next((c for c in cols if any(x in c for x in ['narration', 'particulars',
