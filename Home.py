@@ -79,9 +79,9 @@ def process_mathematical_parser(file, password_list):
     pdf_bytes = file.read()
     file.seek(0)
     
-    matched_pwd = None
+    unlocked_pdf_stream = None
     
-    # ENGINE 1: PyPDF2 SECURITY BYPASS
+    # ⚡ ENGINE 1: PyPDF2 SECURITY BYPASS (AAPKA ORIGINAL TALA TODNE WALA LOGIC)
     try:
         temp_stream = io.BytesIO(pdf_bytes)
         pdf_reader = PyPDF2.PdfReader(temp_stream)
@@ -94,7 +94,6 @@ def process_mathematical_parser(file, password_list):
                 try:
                     if pdf_reader.decrypt(pwd): 
                         unlocked = True
-                        matched_pwd = pwd
                         break
                 except Exception:
                     continue
@@ -103,16 +102,24 @@ def process_mathematical_parser(file, password_list):
                 err_msg = "PDF is locked. Auto-Unlock failed."
                 return None, err_msg
                 
+            pdf_writer = PyPDF2.PdfWriter()
+            for page in pdf_reader.pages:
+                pdf_writer.add_page(page)
+            
+            unlocked_pdf_stream = io.BytesIO()
+            pdf_writer.write(unlocked_pdf_stream)
+            unlocked_pdf_stream.seek(0)
+        else:
+            unlocked_pdf_stream = io.BytesIO(pdf_bytes)
+            
     except Exception as e:
         return None, "Decryption Engine Error: " + str(e)
 
-    # ENGINE 2: PDFPLUMBER EXTRACTION
+    # ⚡ ENGINE 2: PDFPLUMBER EXTRACTION
     try:
-        original_pdf_stream = io.BytesIO(pdf_bytes)
-        with pdfplumber.open(original_pdf_stream, password=matched_pwd) as pdf:
+        with pdfplumber.open(unlocked_pdf_stream) as pdf:
             
-            # Splitting Regex to avoid truncation
-            r1 = r'^\s*(\d{1,2}[\s/\-\.]{1,3}'
+            r1 = r'(\d{1,2}[\s/\-\.]{1,3}'
             r2 = r'(?:[a-zA-Z]{3,10}|\d{1,2})'
             r3 = r'[\s/\-\.]{1,3}\d{2,4})'
             regex_str = r1 + r2 + r3
@@ -143,13 +150,15 @@ def process_mathematical_parser(file, password_list):
                         date_str = re.sub(r'[\s\.\-]', '/', raw_date_str)
                         date_str = re.sub(r'/+', '/', date_str)
                         
-                        # THE FIX: Broken down the truncated line
-                        m_str = match.group(0)
-                        m_len = len(m_str)
-                        rem = line[m_len:]
-                        rem = rem.strip()
+                        # 🔥 THE REAL FIX: Proper string slicing (Kaatne ka sahi tareeqa)
+                        end_idx = match.end()
+                        start_idx = match.start()
+                        
+                        rem = line[end_idx:].strip()
+                        pref = line[:start_idx].strip()
+                        full_rem = (pref + " " + rem).strip()
 
-                        parts = rem.split()
+                        parts = full_rem.split()
                         numbers = []
                         narration_words = []
 
@@ -196,7 +205,8 @@ def process_mathematical_parser(file, password_list):
                                 'statement', 'branch', 'opening', 
                                 'closing', 'brought forward'
                             ]
-                            if not any(ig in line.lower() for ig in ignore_words):
+                            l_low = line.lower()
+                            if not any(ig in l_low for ig in ignore_words):
                                 reg2 = r'^-?\d+(\.\d+)?$'
                                 clean_parts = []
                                 for p in line.split():
@@ -286,7 +296,7 @@ def process_excel_parser(file):
         date_col = next((c for c in cols if 'date' in c), None)
         
         n_kws = ['narration', 'particulars', 'description']
-        narration_col = next((c for c in cols if any(x in c for x in n_kws)), None)
+        nar_col = next((c for c in cols if any(x in c for x in n_kws)), None)
         
         dr_kws = ['debit', 'withdrawal', 'dr']
         debit_col = next((c for c in cols if any(x in c for x in dr_kws)), None)
@@ -296,21 +306,21 @@ def process_excel_parser(file):
         
         balance_col = next((c for c in cols if 'balance' in c), None)
         
-        if not date_col or not narration_col: 
+        if not date_col or not nar_col: 
             return None, "Format error: Date/Narration not found."
             
         for _, row in df.iterrows():
-            raw_date = row[date_col]
-            rd_str = str(raw_date).strip().lower()
-            if pd.isna(raw_date) or rd_str == 'nan': 
+            r_date = row[date_col]
+            rd_str = str(r_date).strip().lower()
+            if pd.isna(r_date) or rd_str == 'nan': 
                 continue
             
-            if isinstance(raw_date, pd.Timestamp):
-                date_val = raw_date.strftime('%d/%m/%Y')
+            if isinstance(r_date, pd.Timestamp):
+                date_val = r_date.strftime('%d/%m/%Y')
             else:
-                date_val = str(raw_date).split(' ')[0]
+                date_val = str(r_date).split(' ')[0]
                 
-            narration_val = str(row[narration_col]).strip()
+            narration_val = str(row[nar_col]).strip()
             if narration_val.lower() == 'nan': 
                 narration_val = ""
             
