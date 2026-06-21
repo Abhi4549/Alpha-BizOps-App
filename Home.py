@@ -1,52 +1,51 @@
 import streamlit as st
 import pandas as pd
-import camelot
-import os
+import pdfplumber
+import io
 
 st.set_page_config(layout="wide", page_title="Alpha BizOps Engine")
 
-# --- ENGINE: CAMELOT (Repotic Style) ---
-def parse_pdf_enterprise(file_path):
-    """
-    Camelot PDF table extraction (Best for Indian Bank Statements)
-    """
+# --- CORE ENGINE (No External Binaries) ---
+def parse_statement_advanced(file, pwd):
+    pdf_bytes = file.read()
+    all_rows = []
+    
     try:
-        # Lattice mode handles grid-based bank statements
-        tables = camelot.read_pdf(file_path, pages='all', flavor='lattice')
+        with pdfplumber.open(io.BytesIO(pdf_bytes), password=pwd) as pdf:
+            for page in pdf.pages:
+                # Table Extraction (pdfplumber's native tool)
+                table = page.extract_table(table_settings={"vertical_strategy": "text", "horizontal_strategy": "text"})
+                if table:
+                    for row in table:
+                        # Row filtering: Date wali lines hi leni hain
+                        all_rows.append([str(cell).replace('\n', ' ') if cell else "" for cell in row])
         
-        all_dfs = []
-        for table in tables:
-            all_dfs.append(table.df)
-        
-        final_df = pd.concat(all_dfs)
-        return final_df
+        # DataFrame creation
+        df = pd.DataFrame(all_rows)
+        # Assuming first row is header
+        df.columns = df.iloc[0]
+        df = df[1:]
+        return df
     except Exception as e:
-        return f"Extraction Error: {e}"
+        return f"Parsing Error: {str(e)}"
 
 # --- UI LAYER ---
-st.title("🏦 Alpha BizOps Engine: Enterprise Parser")
+st.title("🏦 Alpha BizOps - Statement Engine")
+uploaded = st.file_uploader("Upload Bank PDF", type=['pdf'])
+pwd = st.text_input("Password", type="password")
 
-uploaded_file = st.file_uploader("Upload Bank PDF", type=['pdf'])
-
-if st.button("Extract Data"):
-    if uploaded_file:
-        # Save temp file for Camelot
-        with open("temp.pdf", "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        
-        with st.spinner("Processing through AI Engine..."):
-            df = parse_pdf_enterprise("temp.pdf")
-            if isinstance(df, pd.DataFrame):
-                # Clean headers
-                df.columns = df.iloc[0] 
-                df = df[1:]
-                st.session_state['data'] = df
-                st.success("Successfully Mapped to Ledger.")
+if st.button("🚀 Process Statement"):
+    if uploaded:
+        with st.spinner("Processing..."):
+            result = parse_statement_advanced(uploaded, pwd)
+            if isinstance(result, pd.DataFrame):
+                st.session_state['data'] = result
+                st.success("Extraction Successful!")
             else:
-                st.error(df)
+                st.error(result)
 
-# --- REPOTIC-STYLE DASHBOARD ---
+# --- DASHBOARD ---
 if 'data' in st.session_state:
     df = st.session_state['data']
     st.dataframe(df, use_container_width=True)
-    st.download_button("Export Ledger (Tally XML)", df.to_csv(index=False), "Ledger.csv")
+    st.download_button("Download Tally-Ready CSV", df.to_csv(index=False), "Ledger.csv")
