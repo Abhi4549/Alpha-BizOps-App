@@ -16,7 +16,7 @@ if 'raw_extracted_data' not in st.session_state:
 if 'cleaned_data' not in st.session_state:
     st.session_state['cleaned_data'] = None
 
-st.set_page_config(page_title="Alpha BizOps Hub v2", page_icon="🏦", layout="wide")
+st.set_page_config(page_title="Alpha BizOps Hub v3", page_icon="🏦", layout="wide")
 
 st.markdown("""
     <style>
@@ -27,14 +27,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="hero-title">🏦 SMART BANK STATEMENT TO TALLY EXCEL</div>', unsafe_allow_html=True)
-st.markdown('<div class="hero-subtitle">Hybrid Math Engine + AI Debit/Credit Assistant | Auto-Unlock Production Grade</div>', unsafe_allow_html=True)
+st.markdown('<div class="hero-subtitle">Table-Extraction Engine + AI Ledger Assistant | Universal Format</div>', unsafe_allow_html=True)
 
 # ==========================================
 # 2. FREE AI ASSISTANT ENGINE (GEMINI FREE TIER)
 # ==========================================
 def ask_gemini_assistant(narration, amount, api_key):
     """
-    Uses Gemini API to analyze transaction narration when math validation is ambiguous.
+    Uses Gemini API to analyze transaction narration.
     Returns 'Debit', 'Credit', or 'Unknown' along with a suggested Tally Ledger Group.
     """
     if not api_key:
@@ -105,7 +105,7 @@ def generate_bank_passwords(name, dob, pan, custom_pwd):
     return list(set(passwords))
 
 # ==========================================
-# 4. BACKEND: HYBRID MATHEMATICAL & AI PARSER
+# 4. BACKEND: TABLE-BASED UNIVERSAL PARSER
 # ==========================================
 def process_hybrid_parser(file, password_list, api_key):
     raw_transactions = []
@@ -114,7 +114,7 @@ def process_hybrid_parser(file, password_list, api_key):
     
     unlocked_pdf_stream = None
     
-    # ⚡ ENGINE 1: SECURITY BYPASS (FOR LOCKED & UNLOCKED)
+    # ⚡ ENGINE 1: SECURITY BYPASS
     try:
         temp_stream = io.BytesIO(pdf_bytes)
         pdf_reader = PyPDF2.PdfReader(temp_stream)
@@ -145,158 +145,86 @@ def process_hybrid_parser(file, password_list, api_key):
     except Exception as e:
         return None, f"Decryption Engine Error: {str(e)}"
 
-    # ⚡ ENGINE 2: ACCURATE EXTRACTION MATRIX
+    # ⚡ ENGINE 2: UNIVERSAL TABLE EXTRACTION
     try:
         with pdfplumber.open(unlocked_pdf_stream) as pdf:
-            date_pattern = re.compile(r'^\s*(\d{1,2}[\s/\-\.]+(?:\d{1,2}|[a-zA-Z]{3,10})[\s/\-\.]+\d{2,4})')
-
             for page in pdf.pages:
-                text = page.extract_text()
-                if not text: continue
+                tables = page.extract_tables(table_settings={"vertical_strategy": "text", "horizontal_strategy": "text"})
                 
-                lines = text.split('\n')
-                cleaned_lines = []
-                for l in lines:
-                    l = l.strip()
-                    if l and (not cleaned_lines or l != cleaned_lines[-1]):
-                        cleaned_lines.append(l)
+                if not tables:
+                    tables = page.extract_tables(table_settings={"vertical_strategy": "lines", "horizontal_strategy": "lines"})
 
-                current_txn = None
+                for table in tables:
+                    header_found = False
+                    col_map = {"date": -1, "narration": -1, "debit": -1, "credit": -1, "balance": -1}
+                    
+                    for row in table:
+                        if not row: continue
+                        
+                        clean_row = [str(cell).replace('\n', ' ').strip() if cell else "" for cell in row]
+                        if not any(clean_row): continue
+                        
+                        row_lower = [str(x).lower() for x in clean_row]
+                        
+                        # Detect Headers
+                        if not header_found:
+                            row_text = " ".join(row_lower)
+                            if ('date' in row_text or 'txn' in row_text) and ('balance' in row_text or 'narration' in row_text):
+                                header_found = True
+                                for i, col in enumerate(row_lower):
+                                    if 'date' in col or 'txn' in col: col_map['date'] = i
+                                    elif any(kw in col for kw in ['particulars', 'narration', 'description', 'remarks']): col_map['narration'] = i
+                                    elif any(kw in col for kw in ['withdrawal', 'debit', 'dr']): col_map['debit'] = i
+                                    elif any(kw in col for kw in ['deposit', 'credit', 'cr']): col_map['credit'] = i
+                                    elif 'balance' in col: col_map['balance'] = i
+                            continue
 
-                for line in cleaned_lines:
-                    match = date_pattern.search(line)
-                    if match:
-                        raw_date_str = match.group(1)
-                        date_str = re.sub(r'[\s\.\-]', '/', raw_date_str)
-                        date_str = re.sub(r'/+', '/', date_str)
-                        
-                        rem = line[match.end():].strip()
-                        
-                        force_dr = False
-                        force_cr = False
-                        if any(x in rem.upper() for x in ["DR", "WITHDRAWAL", "DEBIT", "DEBITED"]): force_dr = True
-                        if any(x in rem.upper() for x in ["CR", "DEPOSIT", "CREDIT", "CREDITED"]): force_cr = True
-                        
-                        parts = rem.split()
-                        numbers = []
-                        
-                        for part in reversed(parts):
-                            clean_part = part.replace(',', '').replace('Cr', '').replace('Dr', '').replace('cr', '').replace('dr', '').strip()
-                            if re.match(r'^-?\d+(\.\d+)?$', clean_part):
-                                numbers.append(float(clean_part))
-                            else: break 
-                        numbers.reverse()
-
-                        if numbers:
-                            narration = " ".join(parts[:-len(numbers)])
-                            balance = numbers[-1]
+                        # Extract Data Based on Fixed Columns
+                        if header_found and col_map['date'] != -1:
+                            date_val = clean_row[col_map['date']] if col_map['date'] < len(clean_row) else ""
+                            narr_val = clean_row[col_map['narration']] if col_map['narration'] != -1 and col_map['narration'] < len(clean_row) else ""
                             
-                            if current_txn: raw_transactions.append(current_txn)
-
-                            if len(numbers) == 2:
-                                current_txn = {
-                                    "Date": date_str, "Narration": narration, "Amount": numbers[0], 
-                                    "Balance": balance, "Debit": 0.0, "Credit": 0.0, 
-                                    "Force_Dr": force_dr, "Force_Cr": force_cr, "Needs_Calc": True, "AI_Ledger": "Pending"
-                                }
-                            elif len(numbers) >= 3:
-                                cr_val = numbers[-2]
-                                dr_val = numbers[-3]
-                                current_txn = {
-                                    "Date": date_str, "Narration": narration, "Amount": max(dr_val, cr_val), 
-                                    "Balance": balance, "Debit": dr_val, "Credit": cr_val, 
-                                    "Force_Dr": force_dr, "Force_Cr": force_cr, "Needs_Calc": False, "AI_Ledger": "Pending"
-                                }
-                            else:
-                                current_txn = {
-                                    "Date": date_str, "Narration": narration, "Amount": 0.0, 
-                                    "Balance": balance, "Debit": 0.0, "Credit": 0.0, 
-                                    "Force_Dr": force_dr, "Force_Cr": force_cr, "Needs_Calc": True, "AI_Ledger": "Pending"
-                                }
-                        else:
-                            if current_txn: current_txn["Narration"] += " " + " ".join(parts)
-                    else:
-                        if current_txn and len(line) > 2:
-                            ignore_words = ['page', 'balance', 'total', 'statement', 'branch', 'opening', 'closing', 'brought forward', 'c/f', 'b/f']
-                            if not any(ig in line.lower() for ig in ignore_words):
-                                current_txn["Narration"] += " " + line
-
-                if current_txn: raw_transactions.append(current_txn)
+                            # Handle Multi-line narrations
+                            if not date_val and narr_val and raw_transactions:
+                                raw_transactions[-1]["Narration"] += " " + narr_val
+                                continue
+                                
+                            if not date_val or not re.search(r'\d', date_val): continue
+                            
+                            def clean_amt(idx):
+                                if idx == -1 or idx >= len(clean_row): return 0.0
+                                val = clean_row[idx].replace(',', '').replace('Cr', '').replace('Dr', '').replace('cr', '').replace('dr', '').strip()
+                                try: return float(val)
+                                except: return 0.0
+                            
+                            dr_val = clean_amt(col_map['debit'])
+                            cr_val = clean_amt(col_map['credit'])
+                            bal_val = clean_amt(col_map['balance'])
+                            
+                            if dr_val > 0 or cr_val > 0 or bal_val > 0:
+                                raw_transactions.append({
+                                    "Date": date_val,
+                                    "Narration": narr_val,
+                                    "Debit": dr_val,
+                                    "Credit": cr_val,
+                                    "Balance": bal_val,
+                                    "AI_Ledger": "Pending" 
+                                })
 
         if not raw_transactions:
-            return None, "Document processed, but no valid transaction structures found."
+            return None, "PDF parsed, but no standard table structure matched."
 
-        # ⚡ ENGINE 3: ANCHORING, MATHEMATICAL SYNC & AI ASSISTANT ROUTING
-        filtered_txns = []
-        opening_anchor = None
-        
-        for txn in raw_transactions:
-            narr_lower = txn["Narration"].lower()
-            if any(kw in narr_lower for kw in ["opening balance", "brought forward", "b/f", "bal b/f", "opening bal", "initial balance"]):
-                opening_anchor = txn["Balance"]
-                continue
-            if any(kw in narr_lower for kw in ["particulars", "description", "statement of account"]) or (txn.get("Amount", 0) == 0.0 and txn["Balance"] == 0.0):
-                continue
-                
-            if filtered_txns:
-                prev = filtered_txns[-1]
-                if txn["Date"] == prev["Date"] and txn["Balance"] == prev["Balance"] and txn["Narration"] == prev["Narration"]:
-                    continue
-                    
-            filtered_txns.append(txn)
-            
-        raw_transactions = filtered_txns
-
-        # Dynamic Routing Loop
-        for i in range(len(raw_transactions)):
-            curr = raw_transactions[i]
-            prev_bal = raw_transactions[i-1]["Balance"] if i > 0 else opening_anchor
-
-            if prev_bal is not None:
-                diff = round(curr["Balance"] - prev_bal, 2)
-                if diff > 0:
-                    curr["Credit"] = diff
-                    curr["Debit"] = 0.0
-                elif diff < 0:
-                    curr["Debit"] = abs(diff)
-                    curr["Credit"] = 0.0
-                else:
-                    # Math delta is zero, let's invoke AI Assistant for routing text triggers safely
-                    if curr.get("Force_Dr"):
-                        curr["Debit"] = curr.get("Amount", 0.0)
-                    elif curr.get("Force_Cr"):
-                        curr["Credit"] = curr.get("Amount", 0.0)
-                    else:
-                        # Call free Gemini AI engine to cross-verify intent
-                        ai_type, ai_ledg = ask_gemini_assistant(curr["Narration"], curr.get("Amount", 0.0), api_key)
-                        curr["AI_Ledger"] = ai_ledg
-                        if ai_type == "Debit":
-                            curr["Debit"] = curr.get("Amount", 0.0)
-                        elif ai_type == "Credit":
-                            curr["Credit"] = curr.get("Amount", 0.0)
-                        else:
-                            if curr.get("Needs_Calc"): curr["Credit"] = curr.get("Amount", 0.0)
-            else:
-                # Missing opening balance fallback using Smart AI parsing
-                ai_type, ai_ledg = ask_gemini_assistant(curr["Narration"], curr.get("Amount", 0.0), api_key)
+        # ⚡ ENGINE 3: FINAL AI ENRICHMENT
+        for curr in raw_transactions:
+            if api_key:
+                amount_to_send = curr.get("Debit", 0.0) if curr.get("Debit", 0.0) > 0 else curr.get("Credit", 0.0)
+                ai_type, ai_ledg = ask_gemini_assistant(curr["Narration"], amount_to_send, api_key)
                 curr["AI_Ledger"] = ai_ledg
-                if ai_type == "Debit":
-                    curr["Debit"] = curr.get("Amount", 0.0)
-                elif ai_type == "Credit":
-                    curr["Credit"] = curr.get("Amount", 0.0)
-                else:
-                    if curr.get("Force_Dr") or any(kw in curr["Narration"].upper() for kw in ["RTGS", "NEFT", "UPI", "IMPS", "CHQ", "ATM", "WITHDRAW", "DR", "DEBIT"]):
-                        curr["Debit"] = curr.get("Amount", 0.0)
-                    else:
-                        curr["Credit"] = curr.get("Amount", 0.0)
-            
-            # Clean flags
-            curr.pop("Needs_Calc", None)
-            curr.pop("Amount", None)
-            curr.pop("Force_Dr", None)
-            curr.pop("Force_Cr", None)
+            else:
+                curr["AI_Ledger"] = "Auto-Detected"
 
         return raw_transactions, "Success"
+        
     except Exception as e: return None, f"Parsing Error: {str(e)}"
 
 # ==========================================
@@ -363,9 +291,9 @@ def to_excel(df):
 # 6. UI: CONFIGURATION & CONFIG MATRIX
 # ==========================================
 st.sidebar.markdown("### 🔑 AI Core Configuration")
-gemini_api_key = st.sidebar.text_input("Gemini API Key (Free Tier)", type="password", help="Enter free Gemini API Key to enable AI ledger mapping & smart debit/credit assignment.")
+gemini_api_key = st.sidebar.text_input("Gemini API Key (Free Tier)", type="password", help="Enter free Gemini API Key to enable AI ledger mapping.")
 if not gemini_api_key:
-    st.sidebar.warning("⚠️ AI Assistant is offline. Enter an API key to auto-detect Ledgers & fix complex routing.")
+    st.sidebar.warning("⚠️ AI Assistant is offline. Enter an API key to auto-detect Ledgers.")
 
 uploaded_file = st.file_uploader("Upload Bank Statement (Locked/Unlocked PDF, Excel, CSV)", type=['pdf', 'xlsx', 'xls', 'csv'])
 
@@ -379,8 +307,8 @@ if uploaded_file:
     with col3: client_pan = st.text_input("PAN Number", help="For HDFC statements")
     with col4: custom_pwd = st.text_input("Exact Password (If known)", type="password")
     
-    if st.button("🚀 Process Engine with Hybrid Verification", use_container_width=True):
-        with st.spinner("Executing extraction matrix & running AI checks..."):
+    if st.button("🚀 Process Engine with Column Extraction", use_container_width=True):
+        with st.spinner("Executing Table Extraction & running AI checks..."):
             pwds = generate_bank_passwords(client_name, client_dob, client_pan, custom_pwd)
             
             if uploaded_file.name.endswith('.pdf'):
