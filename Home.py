@@ -168,8 +168,21 @@ def process_mathematical_parser(file, password_list):
         if not raw_transactions:
             return None, "Document unlocked, but no transactions found. Bank format might be unsupported or it's a scanned photo."
 
+        # ⚡ ENGINE 3: THE FIX FOR THE "FIRST LINE" ERROR
         for i in range(len(raw_transactions)):
             curr = raw_transactions[i]
+            narration_upper = curr["Narration"].upper()
+            
+            # Puraani pehli line ko detect karo
+            is_opening_bal = any(kw in narration_upper for kw in ["OPENING", "BROUGHT FORWARD", "B/F", "BAL B/F", "O/B", "INITIAL"])
+            
+            if is_opening_bal:
+                curr["Debit"] = 0.0
+                curr["Credit"] = 0.0
+                curr["Amount"] = 0.0
+                # Balance as it is rahega
+                continue
+
             if i > 0:
                 prev_bal = raw_transactions[i-1]["Balance"]
                 curr_bal = curr["Balance"]
@@ -184,7 +197,7 @@ def process_mathematical_parser(file, password_list):
                 else:
                     curr["Credit"] = curr["Amount"] if curr["Amount"] > 0 else 0.0
             else:
-                narration_upper = curr["Narration"].upper()
+                # Agar pehli line real transaction hai (opening balance nahi hai)
                 if any(kw in narration_upper for kw in ["RTGS", "NEFT", "UPI", "IMPS", "CHQ", "ATM", "WITHDRAW", "DR", "DEBIT"]):
                     curr["Debit"] = curr["Amount"]
                 else:
