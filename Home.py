@@ -100,7 +100,7 @@ def process_mathematical_parser(file, password_list):
     except Exception as e:
         return None, f"Decryption Engine Error: {str(e)}"
 
-    # ⚡ ENGINE 2: PROFESSIONAL PDF EXTRACTION 
+    # ⚡ ENGINE 2: PROFESSIONAL PDF EXTRACTION
     try:
         with pdfplumber.open(unlocked_pdf_stream) as pdf:
             date_pattern = re.compile(r'^\s*(\d{1,2}[\s/\-\.]+(?:\d{1,2}|[a-zA-Z]{3,10})[\s/\-\.]+\d{2,4})')
@@ -132,7 +132,7 @@ def process_mathematical_parser(file, password_list):
                         parts = rem.split()
                         numbers = []
                         
-                        # Scan right-to-left to safely extract amounts
+                        # Right-to-Left scanning for amounts
                         for part in reversed(parts):
                             clean_part = part.replace(',', '').replace('Cr', '').replace('Dr', '').replace('cr', '').replace('dr', '').strip()
                             if re.match(r'^-?\d+(\.\d+)?$', clean_part):
@@ -174,14 +174,40 @@ def process_mathematical_parser(file, password_list):
                     raw_transactions.append(current_txn)
 
         if not raw_transactions:
-            return None, "Document unlocked, but no transactions found. If this is a scanned photo, standard digital parsing cannot read it."
+            return None, "Document unlocked, but no transactions found. Bank format unsupported or scanned photo."
 
-        # Post-Processing
+        # 🎯 SMART FILTER: Index 0 Se Trash Data Aur Opening Balances Hatao
+        cleaned_txns = []
+        opening_anchor = None
+        
+        for txn in raw_transactions:
+            narr_lower = txn["Narration"].lower()
+            # Agar sirf Opening Balance ya B/F line hai, toh uske balance ko anchor banao aur transation list se bahar rakho
+            if any(kw in narr_lower for kw in ["opening balance", "brought forward", "b/f", "bal b/f", "opening bal", "initial balance"]):
+                opening_anchor = txn["Balance"]
+                continue
+            # Header rows ko filter out karo
+            if any(kw in narr_lower for kw in ["particulars", "description", "statement of account"]):
+                continue
+            cleaned_txns.append(txn)
+            
+        raw_transactions = cleaned_txns
+
+        if not raw_transactions:
+            return None, "No active transactions found after filtering header/opening summaries."
+
+        # Post-Processing: Calculation loop starting safely from index 0 of genuine transactions
         for i in range(len(raw_transactions)):
             curr = raw_transactions[i]
             if curr.get("Needs_Calc", False):
                 if i > 0:
                     prev_bal = raw_transactions[i-1]["Balance"]
+                elif opening_anchor is not None:
+                    prev_bal = opening_anchor
+                else:
+                    prev_bal = None
+
+                if prev_bal is not None:
                     curr_bal = curr["Balance"]
                     diff = round(curr_bal - prev_bal, 2)
 
@@ -194,6 +220,7 @@ def process_mathematical_parser(file, password_list):
                     else:
                         curr["Credit"] = curr["Amount"] if curr["Amount"] > 0 else 0.0
                 else:
+                    # Agar anchor nahi milta tabhi keyword fallback use hoga
                     narration_upper = curr["Narration"].upper()
                     if any(kw in narration_upper for kw in ["RTGS", "NEFT", "UPI", "IMPS", "CHQ", "ATM", "WITHDRAW", "DR", "DEBIT"]):
                         curr["Debit"] = curr["Amount"]
