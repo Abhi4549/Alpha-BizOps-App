@@ -1,67 +1,70 @@
 import streamlit as st
 import pandas as pd
-import tabula
+import pdfplumber
+import PyPDF2
 import io
 import re
-from datetime import datetime
 
-# --- SAAS CONFIG ---
-st.set_page_config(page_title="Alpha BizOps - Enterprise Statement Parser", layout="wide")
+st.set_page_config(layout="wide")
 
-def clean_amount(val):
-    if isinstance(val, str):
-        val = val.replace(',', '').replace('Cr', '').replace('Dr', '').strip()
-        try: return float(val)
-        except: return 0.0
-    return float(val)
-
-def process_enterprise_pdf(file, pwd):
-    # Tabula robustly extracts tables from complex PDFs
+def get_data_from_pdf(file, pwd):
+    pdf_bytes = file.read()
+    raw_text = ""
+    
+    # Text extraction with protection
     try:
-        tables = tabula.read_pdf(file, pages="all", password=pwd, multiple_tables=True)
-        full_df = pd.concat(tables)
-        
-        # COLUMN MAPPING (Enterprise Auto-Detection)
-        # Assuming common Tally export headers: Date, Narration, Debit, Credit, Balance
-        target_cols = ['Date', 'Narration', 'Debit', 'Credit', 'Balance']
-        df = pd.DataFrame(columns=target_cols)
-        
-        # Accurate Data Mapping
-        df['Date'] = pd.to_datetime(full_df.iloc[:,0], errors='coerce')
-        df['Narration'] = full_df.iloc[:,1].astype(str)
-        df['Debit'] = full_df.iloc[:,2].apply(clean_amount)
-        df['Credit'] = full_df.iloc[:,3].apply(clean_amount)
-        df['Balance'] = full_df.iloc[:,4].apply(clean_amount)
-        
-        return df.dropna(subset=['Date'])
+        with pdfplumber.open(io.BytesIO(pdf_bytes), password=pwd) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    raw_text += page_text + "\n"
     except Exception as e:
-        st.error(f"Engine Failure: {e}")
-        return None
+        return f"PDF Open Error: {e}"
 
-# --- UI SECTION ---
-st.title("🏦 Alpha BizOps Tally-Ready Parser")
-uploaded_file = st.file_uploader("Upload Bank Statement (PDF/Excel)", type=['pdf', 'xlsx', 'csv'])
-pwd = st.text_input("PDF Password (if protected)", type="password")
+    if not raw_text: return "No text found in PDF."
 
-if st.button("🚀 Run Enterprise Processing"):
-    if uploaded_file:
-        with st.spinner("Parsing and Normalizing Data..."):
-            df = process_enterprise_pdf(uploaded_file, pwd)
-            st.session_state['df'] = df
-            st.success("Extraction Complete with 100% Accuracy.")
+    # Pattern extraction (Date, Description, Amount)
+    rows = []
+    # Logic: Har wo line uthao jisme date (DD/MM/YYYY) hai
+    for line in raw_text.split('\n'):
+        # Matches: Date (optional space) Description (optional space) Amount
+        match = re.search(r'(\d{2}/\d{2}/\d{4})\s+(.+?)\s+(-?[\d,]+\.\d{2})', line)
+        if match:
+            rows.append({
+                "Date": match.group(1),
+                "Narration": match.group(2),
+                "Amount": float(match.group(3).replace(',', ''))
+            })
+    
+    if not rows: return "No transaction pattern matched."
+    
+    df = pd.DataFrame(rows)
+    df['Date'] = pd.to_datetime(df['Date'], dayfirst=True)
+    df['Debit'] = df['Amount'].apply(lambda x: abs(x) if x < 0 else 0.0)
+    df['Credit'] = df['Amount'].apply(lambda x: x if x > 0 else 0.0)
+    return df
+
+# UI Layer
+st.title("🏦 Alpha BizOps - Statement Processor")
+uploaded = st.file_uploader("Upload PDF", type=['pdf'])
+pwd = st.text_input("Password", type="password")
+
+if st.button("🚀 Process"):
+    if uploaded:
+        result = get_data_from_pdf(uploaded, pwd)
+        if isinstance(result, pd.DataFrame):
+            st.session_state['df'] = result
+            st.success("Extraction Done!")
+        else:
+            st.error(result)
 
 if 'df' in st.session_state:
     df = st.session_state['df']
     
-    # DASHBOARD
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total Debits", f"₹{df['Debit'].sum():,.2f}")
-    col2.metric("Total Credits", f"₹{df['Credit'].sum():,.2f}")
-    col3.metric("Txn Count", len(df))
-    col4.metric("Closing Bal", f"₹{df.iloc[-1]['Balance']:,.2f}")
+    # Metrics - Safe from empty sum error
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Debits", f"₹{df['Debit'].sum():,.2f}")
+    c2.metric("Credits", f"₹{df['Credit'].sum():,.2f}")
+    c3.metric("Total Rows", len(df))
     
     st.dataframe(df, use_container_width=True)
-    
-    # EXPORT
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button("Download Tally-Ready CSV", csv, "Tally_Import.csv", "text/csv")
