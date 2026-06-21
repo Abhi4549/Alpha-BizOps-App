@@ -103,12 +103,12 @@ def process_mathematical_parser(file, password_list):
     # ⚡ ENGINE 2: PDFPLUMBER EXTRACTION WITH GOD-MODE REGEX
     try:
         with pdfplumber.open(unlocked_pdf_stream) as pdf:
-            date_pattern = re.compile(r'^\s*(\d{1,2}[\s/\-\.]{1,3}(?:[a-zA-Z]{3,10}|\d{1,2})[\s/\-\.]{1,3}\d{2,4})')
+            # FIX: ^[^a-zA-Z0-9]* ignores invisible table borders or spaces before the Date
+            date_pattern = re.compile(r'^[^a-zA-Z0-9]*(\d{1,2}[\s/\-\.]{1,3}(?:[a-zA-Z]{3,10}|\d{1,2})[\s/\-\.]{1,3}\d{2,4})')
 
             for page in pdf.pages:
-                text = page.extract_text(layout=True)
-                if not text: 
-                    text = page.extract_text()
+                # FIX: Removed layout=True as it can break columns in certain HDFC/Axis PDFs
+                text = page.extract_text()
                 if not text: 
                     continue
                 
@@ -137,6 +137,12 @@ def process_mathematical_parser(file, password_list):
 
                         for part in parts:
                             cl_part = part.replace(',', '').replace('Cr', '').replace('Dr', '').replace('cr', '').replace('dr', '').strip()
+                            
+                            # FIX: Handling HDFC OCR double dots (e.g., 549.702.14 -> 549702.14)
+                            if cl_part.count('.') > 1:
+                                last_dot = cl_part.rfind('.')
+                                cl_part = cl_part[:last_dot].replace('.', '') + cl_part[last_dot:]
+
                             if re.match(r'^-?\d+(\.\d+)?$', cl_part):
                                 if cl_part.startswith('0') and '.' not in cl_part and len(cl_part) >= 4:
                                     narration_words.append(part)
@@ -252,7 +258,6 @@ def process_excel_parser(file):
             raw_date = row[date_col]
             if pd.isna(raw_date) or str(raw_date).strip().lower() == 'nan': continue
             
-            # FIXED LINE (No Syntax Error Here Now):
             date_val = raw_date.strftime('%d/%m/%Y') if isinstance(raw_date, pd.Timestamp) else str(raw_date).split(' ')[0]
             
             narration_val = str(row[narration_col]).strip()
