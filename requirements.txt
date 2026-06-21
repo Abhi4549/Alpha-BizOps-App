@@ -1,5 +1,6 @@
 streamlit
 pandas
-pdfplumber
-PyPDF2
+tabula-py
 openpyxl
+reportlab
+python-dateutil
