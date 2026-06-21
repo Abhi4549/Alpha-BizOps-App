@@ -100,7 +100,7 @@ def process_mathematical_parser(file, password_list):
     except Exception as e:
         return None, f"Decryption Engine Error: {str(e)}"
 
-    # ⚡ ENGINE 2: PROFESSIONAL PDF EXTRACTION
+    # ⚡ ENGINE 2: ANTI-DUPLICATION EXTRACTION ENGINE
     try:
         with pdfplumber.open(unlocked_pdf_stream) as pdf:
             date_pattern = re.compile(r'^\s*(\d{1,2}[\s/\-\.]+(?:\d{1,2}|[a-zA-Z]{3,10})[\s/\-\.]+\d{2,4})')
@@ -111,60 +111,59 @@ def process_mathematical_parser(file, password_list):
                     continue
                 
                 lines = text.split('\n')
+                
+                # Layer-1: Clean duplicate consecutive string layers from PDF artifacts
+                cleaned_lines = []
+                for l in lines:
+                    l = l.strip()
+                    if l and (not cleaned_lines or l != cleaned_lines[-1]):
+                        cleaned_lines.append(l)
+
                 current_txn = None
 
-                for line in lines:
-                    line = line.strip()
-                    if not line: 
-                        continue
-
+                for line in cleaned_lines:
                     match = date_pattern.search(line)
                     if match:
-                        if current_txn: 
-                            raw_transactions.append(current_txn)
-
                         raw_date_str = match.group(1)
                         date_str = re.sub(r'[\s\.\-]', '/', raw_date_str)
                         date_str = re.sub(r'/+', '/', date_str)
                         
                         rem = line[match.end():].strip()
-
                         parts = rem.split()
-                        numbers = []
                         
-                        # Right-to-Left scanning for amounts
+                        # Right-to-Left check for actual transaction numbers
+                        numbers = []
                         for part in reversed(parts):
                             clean_part = part.replace(',', '').replace('Cr', '').replace('Dr', '').replace('cr', '').replace('dr', '').strip()
                             if re.match(r'^-?\d+(\.\d+)?$', clean_part):
                                 numbers.append(float(clean_part))
                             else:
                                 break 
-
                         numbers.reverse()
 
+                        # Layer-2: Only create new transaction if financial numbers exist
                         if numbers:
                             narration = " ".join(parts[:-len(numbers)])
-                        else:
-                            narration = " ".join(parts)
-
-                        balance = 0.0
-                        debit = 0.0
-                        credit = 0.0
-
-                        if len(numbers) >= 1:
                             balance = numbers[-1]
-                        
-                        if len(numbers) == 2:
-                            txn_amount = numbers[-2]
-                            current_txn = {"Date": date_str, "Narration": narration, "Amount": txn_amount, "Balance": balance, "Debit": 0.0, "Credit": 0.0, "Needs_Calc": True}
-                        elif len(numbers) >= 3:
-                            credit = numbers[-2]
-                            debit = numbers[-3]
-                            current_txn = {"Date": date_str, "Narration": narration, "Amount": max(debit, credit), "Balance": balance, "Debit": debit, "Credit": credit, "Needs_Calc": False}
-                        else:
-                            current_txn = {"Date": date_str, "Narration": narration, "Amount": 0.0, "Balance": balance, "Debit": 0.0, "Credit": 0.0, "Needs_Calc": True}
+                            
+                            if current_txn: 
+                                raw_transactions.append(current_txn)
 
+                            if len(numbers) == 2:
+                                txn_amount = numbers[0]
+                                current_txn = {"Date": date_str, "Narration": narration, "Amount": txn_amount, "Balance": balance, "Debit": 0.0, "Credit": 0.0, "Needs_Calc": True}
+                            elif len(numbers) >= 3:
+                                credit = numbers[-2]
+                                debit = numbers[-3]
+                                current_txn = {"Date": date_str, "Narration": narration, "Amount": max(debit, credit), "Balance": balance, "Debit": debit, "Credit": credit, "Needs_Calc": False}
+                            else:
+                                current_txn = {"Date": date_str, "Narration": narration, "Amount": 0.0, "Balance": balance, "Debit": 0.0, "Credit": 0.0, "Needs_Calc": True}
+                        else:
+                            # Date milna par numbers na milne ka matlab hai yeh wrapped text ya value date row hai
+                            if current_txn:
+                                current_txn["Narration"] += " " + " ".join(parts)
                     else:
+                        # Append running multi-line descriptions safely
                         if current_txn and len(line) > 2:
                             ignore_words = ['page', 'balance', 'total', 'statement', 'branch', 'opening', 'closing', 'brought forward', 'c/f', 'b/f']
                             if not any(ig in line.lower() for ig in ignore_words):
@@ -174,29 +173,33 @@ def process_mathematical_parser(file, password_list):
                     raw_transactions.append(current_txn)
 
         if not raw_transactions:
-            return None, "Document unlocked, but no transactions found. Bank format unsupported or scanned photo."
+            return None, "Document unlocked, but no transactions found."
 
-        # 🎯 SMART FILTER: Index 0 Se Trash Data Aur Opening Balances Hatao
-        cleaned_txns = []
+        # Layer-3: Absolute Post-Processing Clean and Deduplication
+        filtered_txns = []
         opening_anchor = None
         
         for txn in raw_transactions:
             narr_lower = txn["Narration"].lower()
-            # Agar sirf Opening Balance ya B/F line hai, toh uske balance ko anchor banao aur transation list se bahar rakho
+            
+            # Anchor setup for precise start calculation
             if any(kw in narr_lower for kw in ["opening balance", "brought forward", "b/f", "bal b/f", "opening bal", "initial balance"]):
                 opening_anchor = txn["Balance"]
                 continue
-            # Header rows ko filter out karo
-            if any(kw in narr_lower for kw in ["particulars", "description", "statement of account"]):
+            if any(kw in narr_lower for kw in ["particulars", "description", "statement of account"]) or (txn["Amount"] == 0.0 and txn["Balance"] == 0.0):
                 continue
-            cleaned_txns.append(txn)
+                
+            # Filter consecutive double entries generated by broken PDF layouts
+            if filtered_txns:
+                prev = filtered_txns[-1]
+                if txn["Date"] == prev["Date"] and txn["Balance"] == prev["Balance"] and txn["Narration"] == prev["Narration"]:
+                    continue
+                    
+            filtered_txns.append(txn)
             
-        raw_transactions = cleaned_txns
+        raw_transactions = filtered_txns
 
-        if not raw_transactions:
-            return None, "No active transactions found after filtering header/opening summaries."
-
-        # Post-Processing: Calculation loop starting safely from index 0 of genuine transactions
+        # Balance Delta Calculation Logic
         for i in range(len(raw_transactions)):
             curr = raw_transactions[i]
             if curr.get("Needs_Calc", False):
@@ -220,7 +223,6 @@ def process_mathematical_parser(file, password_list):
                     else:
                         curr["Credit"] = curr["Amount"] if curr["Amount"] > 0 else 0.0
                 else:
-                    # Agar anchor nahi milta tabhi keyword fallback use hoga
                     narration_upper = curr["Narration"].upper()
                     if any(kw in narration_upper for kw in ["RTGS", "NEFT", "UPI", "IMPS", "CHQ", "ATM", "WITHDRAW", "DR", "DEBIT"]):
                         curr["Debit"] = curr["Amount"]
