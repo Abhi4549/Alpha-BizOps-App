@@ -58,7 +58,7 @@ def generate_bank_passwords(name, dob, pan, custom_pwd):
     return list(set(passwords))
 
 # ==========================================
-# 3. BACKEND: PRO PDF PARSER ENGINE
+# 3. BACKEND: PRODUCTION-GRADE PDF PARSER
 # ==========================================
 def process_mathematical_parser(file, password_list):
     raw_transactions = []
@@ -67,7 +67,7 @@ def process_mathematical_parser(file, password_list):
     
     unlocked_pdf_stream = None
     
-    # ⚡ ENGINE 1: PyPDF2 SECURITY BYPASS
+    # ⚡ ENGINE 1: SECURITY BYPASS
     try:
         temp_stream = io.BytesIO(pdf_bytes)
         pdf_reader = PyPDF2.PdfReader(temp_stream)
@@ -98,10 +98,9 @@ def process_mathematical_parser(file, password_list):
     except Exception as e:
         return None, f"Decryption Engine Error: {str(e)}"
 
-    # ⚡ ENGINE 2: STRICT EXTRACTION & DEDUPLICATION
+    # ⚡ ENGINE 2: ACCURATE EXTRACTION MATRIX
     try:
         with pdfplumber.open(unlocked_pdf_stream) as pdf:
-            # Handles DD/MM/YYYY, DD-MMM-YYYY, etc.
             date_pattern = re.compile(r'^\s*(\d{1,2}[\s/\-\.]+(?:\d{1,2}|[a-zA-Z]{3,10})[\s/\-\.]+\d{2,4})')
 
             for page in pdf.pages:
@@ -109,8 +108,6 @@ def process_mathematical_parser(file, password_list):
                 if not text: continue
                 
                 lines = text.split('\n')
-                
-                # Cleanup overlapping PDF artifacts
                 cleaned_lines = []
                 for l in lines:
                     l = l.strip()
@@ -127,9 +124,17 @@ def process_mathematical_parser(file, password_list):
                         date_str = re.sub(r'/+', '/', date_str)
                         
                         rem = line[match.end():].strip()
-                        parts = rem.split()
                         
+                        # Explicit check for Credit/Debit keywords on the line raw text
+                        force_dr = False
+                        force_cr = False
+                        if any(x in rem.upper() for x in ["DR", "WITHDRAWAL", "DEBIT", "DEBITED"]): force_dr = True
+                        if any(x in rem.upper() for x in ["CR", "DEPOSIT", "CREDIT", "CREDITED"]): force_cr = True
+                        
+                        parts = rem.split()
                         numbers = []
+                        
+                        # Right-to-Left extraction for absolute isolation of amounts
                         for part in reversed(parts):
                             clean_part = part.replace(',', '').replace('Cr', '').replace('Dr', '').replace('cr', '').replace('dr', '').strip()
                             if re.match(r'^-?\d+(\.\d+)?$', clean_part):
@@ -144,11 +149,27 @@ def process_mathematical_parser(file, password_list):
                             if current_txn: raw_transactions.append(current_txn)
 
                             if len(numbers) == 2:
-                                current_txn = {"Date": date_str, "Narration": narration, "Amount": numbers[0], "Balance": balance, "Debit": 0.0, "Credit": 0.0, "Needs_Calc": True}
+                                # Standard 2 numbers found: [Transaction Amount, Running Balance]
+                                current_txn = {
+                                    "Date": date_str, "Narration": narration, "Amount": numbers[0], 
+                                    "Balance": balance, "Debit": 0.0, "Credit": 0.0, 
+                                    "Force_Dr": force_dr, "Force_Cr": force_cr, "Needs_Calc": True
+                                }
                             elif len(numbers) >= 3:
-                                current_txn = {"Date": date_str, "Narration": narration, "Amount": max(numbers[-3], numbers[-2]), "Balance": balance, "Debit": numbers[-3], "Credit": numbers[-2], "Needs_Calc": False}
+                                # Explicit 3 columns layout: [Debit_Amt, Credit_Amt, Balance]
+                                cr_val = numbers[-2]
+                                dr_val = numbers[-3]
+                                current_txn = {
+                                    "Date": date_str, "Narration": narration, "Amount": max(dr_val, cr_val), 
+                                    "Balance": balance, "Debit": dr_val, "Credit": cr_val, 
+                                    "Force_Dr": force_dr, "Force_Cr": force_cr, "Needs_Calc": False
+                                }
                             else:
-                                current_txn = {"Date": date_str, "Narration": narration, "Amount": 0.0, "Balance": balance, "Debit": 0.0, "Credit": 0.0, "Needs_Calc": True}
+                                current_txn = {
+                                    "Date": date_str, "Narration": narration, "Amount": 0.0, 
+                                    "Balance": balance, "Debit": 0.0, "Credit": 0.0, 
+                                    "Force_Dr": force_dr, "Force_Cr": force_cr, "Needs_Calc": True
+                                }
                         else:
                             if current_txn: current_txn["Narration"] += " " + " ".join(parts)
                     else:
@@ -162,7 +183,7 @@ def process_mathematical_parser(file, password_list):
         if not raw_transactions:
             return None, "Document unlocked, but no valid transactions found."
 
-        # ⚡ ENGINE 3: ANCHORING & CALCULATIONS
+        # ⚡ ENGINE 3: ANCHORING & MATHEMATICAL SYNC
         filtered_txns = []
         opening_anchor = None
         
@@ -183,28 +204,46 @@ def process_mathematical_parser(file, password_list):
             
         raw_transactions = filtered_txns
 
+        # Mathematical Validation Loop (Fixes Debit/Credit swaps permanently)
         for i in range(len(raw_transactions)):
             curr = raw_transactions[i]
-            if curr.get("Needs_Calc", False):
-                prev_bal = raw_transactions[i-1]["Balance"] if i > 0 else opening_anchor
+            prev_bal = raw_transactions[i-1]["Balance"] if i > 0 else opening_anchor
 
-                if prev_bal is not None:
-                    diff = round(curr["Balance"] - prev_bal, 2)
-                    if diff > 0:
-                        curr["Credit"] = diff
-                        curr["Debit"] = 0.0
-                    elif diff < 0:
-                        curr["Debit"] = abs(diff)
-                        curr["Credit"] = 0.0
-                    else:
-                        curr["Credit"] = curr.get("Amount", 0.0) if curr.get("Amount", 0.0) > 0 else 0.0
+            if prev_bal is not None:
+                diff = round(curr["Balance"] - prev_bal, 2)
+                
+                # Math based dynamic column routing
+                if diff > 0:
+                    curr["Credit"] = diff
+                    curr["Debit"] = 0.0
+                elif diff < 0:
+                    curr["Debit"] = abs(diff)
+                    curr["Credit"] = 0.0
                 else:
-                    if any(kw in curr["Narration"].upper() for kw in ["RTGS", "NEFT", "UPI", "IMPS", "CHQ", "ATM", "WITHDRAW", "DR", "DEBIT"]):
+                    # If balance did not change, route based on text triggers or standard parsing
+                    if curr.get("Force_Dr"):
                         curr["Debit"] = curr.get("Amount", 0.0)
-                    else: curr["Credit"] = curr.get("Amount", 0.0)
+                        curr["Credit"] = 0.0
+                    elif curr.get("Force_Cr"):
+                        curr["Credit"] = curr.get("Amount", 0.0)
+                        curr["Debit"] = 0.0
+                    else:
+                        if curr.get("Needs_Calc"):
+                            curr["Credit"] = curr.get("Amount", 0.0)
+            else:
+                # Fallback purely for the first entry if opening balance anchor is missing
+                if curr.get("Force_Dr") or any(kw in curr["Narration"].upper() for kw in ["RTGS", "NEFT", "UPI", "IMPS", "CHQ", "ATM", "WITHDRAW", "DR", "DEBIT"]):
+                    curr["Debit"] = curr.get("Amount", 0.0)
+                    curr["Credit"] = 0.0
+                else:
+                    curr["Credit"] = curr.get("Amount", 0.0)
+                    curr["Debit"] = 0.0
             
+            # Remove execution flags before pushing out
             curr.pop("Needs_Calc", None)
             curr.pop("Amount", None)
+            curr.pop("Force_Dr", None)
+            curr.pop("Force_Cr", None)
 
         return raw_transactions, "Success"
     except Exception as e: return None, f"Parsing Error: {str(e)}"
@@ -298,7 +337,7 @@ if uploaded_file:
                 st.error(f"❌ Error: {status if raw_data is None else 'No transactions found.'}")
 
 # ==========================================
-# 6. UI: DASHBOARD & EXPORT
+# 6. UI: DASHBOARD & EXPORT (TALLY READY)
 # ==========================================
 if st.session_state.get('raw_extracted_data') is not None:
     full_df = st.session_state['raw_extracted_data'].copy()
