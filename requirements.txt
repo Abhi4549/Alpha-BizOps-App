@@ -1,1 +1,5 @@
-pip install streamlit pandas pdfplumber PyPDF2 openpyxl msoffcrypto-tool
+streamlit
+pandas
+pdfplumber
+PyPDF2
+openpyxl
