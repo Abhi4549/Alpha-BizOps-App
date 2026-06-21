@@ -6,110 +6,88 @@ import io
 import re
 import datetime
 
-# ==========================================
-# 1. MEMORY & UI CONFIGURATION
-# ==========================================
-if 'raw_extracted_data' not in st.session_state:
-    st.session_state['raw_extracted_data'] = None
-
+# --- UI CONFIG ---
 st.set_page_config(page_title="Alpha BizOps Hub", page_icon="🏦", layout="wide")
+st.markdown("<h1 style='text-align: center; color: #1E3A8A;'>🏦 Alpha BizOps Hub</h1>", unsafe_allow_html=True)
 
-st.markdown("""
-    <style>
-    .hero-title { font-size: 38px; font-weight: 800; color: #1E3A8A; text-align: center; margin-bottom: 5px;}
-    .hero-subtitle { font-size: 16px; color: #4B5563; text-align: center; margin-bottom: 30px;}
-    .metric-card { background-color: #F3F4F6; padding: 15px; border-radius: 8px; text-align: center; border: 1px solid #E5E7EB; box-shadow: 2px 2px 5px rgba(0,0,0,0.05); }
-    </style>
-""", unsafe_allow_html=True)
+if 'raw_data' not in st.session_state: st.session_state['raw_data'] = None
 
-st.markdown('<div class="hero-title">🏦 BANK STATEMENT TO TALLY EXCEL</div>', unsafe_allow_html=True)
-
-# ==========================================
-# 2. SMART PASSWORD ENGINE
-# ==========================================
-def generate_bank_passwords(name, dob, pan, custom_pwd):
-    passwords = []
-    if custom_pwd: passwords.append(custom_pwd.strip())
+# --- ENGINE: PASSWORD GENERATOR ---
+def generate_passwords(name, dob, pan, custom):
+    pwds = [custom] if custom else []
     if dob:
-        d, m, y_full, y_short = dob.strftime("%d"), dob.strftime("%m"), dob.strftime("%Y"), dob.strftime("%y")
-        passwords.extend([f"{d}{m}{y_full}", f"{d}{m}{y_short}"])
+        d, m, y, ys = dob.strftime("%d"), dob.strftime("%m"), dob.strftime("%Y"), dob.strftime("%y")
+        pwds.extend([f"{d}{m}{y}", f"{d}{m}{ys}"])
         if name:
-            n = re.sub(r'[^a-zA-Z]', '', name)[:4]
-            passwords.extend([f"{n.lower()}{d}{m}", f"{n.upper()}{d}{m}", f"{n.lower()}{d}{m}{y_full}"])
-    if pan: passwords.extend([pan.lower().strip(), pan.upper().strip()])
-    return list(set(passwords))
+            n = re.sub(r'[^a-zA-Z]', '', name)[:4].lower()
+            pwds.extend([f"{n}{d}{m}", f"{n.upper()}{d}{m}", f"{n}{d}{m}{y}"])
+    if pan: pwds.extend([pan.lower(), pan.upper()])
+    return list(set(filter(None, pwds)))
 
-# ==========================================
-# 3. BACKEND: OPTIMIZED PDF PARSER
-# ==========================================
-def process_mathematical_parser(file, password_list):
-    raw_transactions = []
+# --- ENGINE: PDF PARSER ---
+def process_pdf(file, pwd_list):
     pdf_bytes = file.read()
-    correct_password = None
-    
-    # Unlock Engine
-    temp_stream = io.BytesIO(pdf_bytes)
-    reader = PyPDF2.PdfReader(temp_stream)
+    reader = PyPDF2.PdfReader(io.BytesIO(pdf_bytes))
+    pwd = None
     if reader.is_encrypted:
-        for pwd in password_list:
-            try:
-                if reader.decrypt(pwd): 
-                    correct_password = pwd
-                    break
-            except: continue
-        if not correct_password: return None, "Password incorrect or PDF corrupted."
-
-    # Extraction Engine
-    try:
-        with pdfplumber.open(io.BytesIO(pdf_bytes), password=correct_password) as pdf:
-            date_pattern = re.compile(r'^(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})')
-            current_txn = None
-            
-            for page in pdf.pages:
-                for line in page.extract_text().split('\n'):
-                    line = line.strip()
-                    match = date_pattern.search(line)
-                    if match:
-                        if current_txn: raw_transactions.append(current_txn)
-                        parts = line.split()
-                        nums = [float(p.replace(',','')) for p in parts if re.match(r'^-?\d+(\.\d+)?$', p.replace(',',''))]
-                        current_txn = {
-                            "Date": match.group(1),
-                            "Narration": " ".join([p for p in parts if not re.match(r'^-?\d+(\.\d+)?$', p.replace(',',''))]),
-                            "Amount": nums[-2] if len(nums) >= 2 else 0.0,
-                            "Balance": nums[-1] if len(nums) >= 1 else 0.0,
-                            "Debit": 0.0, "Credit": 0.0
-                        }
-                    elif current_txn:
-                        current_txn["Narration"] += " " + line
-            if current_txn: raw_transactions.append(current_txn)
-            
-        # Reverse Math Logic
-        for i in range(len(raw_transactions)):
-            if i > 0:
-                diff = round(raw_transactions[i]["Balance"] - raw_transactions[i-1]["Balance"], 2)
-                raw_transactions[i]["Credit"] = diff if diff > 0 else 0.0
-                raw_transactions[i]["Debit"] = abs(diff) if diff < 0 else 0.0
-                
-        return raw_transactions, "Success"
-    except Exception as e: return None, str(e)
-
-# ==========================================
-# 4. UI: EXECUTION BLOCK
-# ==========================================
-uploaded_file = st.file_uploader("Upload Bank Statement", type=['pdf'])
-if uploaded_file:
-    name = st.text_input("Name")
-    dob = st.date_input("DOB", None)
-    pan = st.text_input("PAN")
+        for p in pwd_list:
+            if reader.decrypt(p): 
+                pwd = p; break
     
-    if st.button("🚀 Process Data"):
-        with st.spinner("Processing..."):
-            pwd_list = generate_bank_passwords(name, dob, pan, "")
-            data, status = process_mathematical_parser(uploaded_file, pwd_list)
-            if data:
-                st.session_state['raw_extracted_data'] = pd.DataFrame(data)
-                st.success("Extracted successfully!")
-                st.dataframe(st.session_state['raw_extracted_data'])
-            else:
-                st.error(status)
+    data = []
+    with pdfplumber.open(io.BytesIO(pdf_bytes), password=pwd) as pdf:
+        date_pat = re.compile(r'^(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})')
+        for page in pdf.pages:
+            for line in page.extract_text().split('\n'):
+                line = line.strip()
+                match = date_pat.search(line)
+                if match:
+                    parts = line.split()
+                    nums = [float(p.replace(',', '')) for p in parts if re.match(r'^-?\d+(\.\d+)?$', p.replace(',', ''))]
+                    data.append({
+                        "Date": match.group(1),
+                        "Narration": " ".join([p for p in parts if not re.match(r'^-?\d+(\.\d+)?$', p.replace(',', ''))]),
+                        "Balance": nums[-1] if nums else 0.0
+                    })
+    
+    df = pd.DataFrame(data)
+    df['Date'] = pd.to_datetime(df['Date'], dayfirst=True)
+    df['Debit'], df['Credit'] = 0.0, 0.0
+    
+    # Calculate Dr/Cr logic
+    for i in range(1, len(df)):
+        diff = round(df.loc[i, 'Balance'] - df.loc[i-1, 'Balance'], 2)
+        if diff < 0: df.loc[i, 'Debit'] = abs(diff)
+        elif diff > 0: df.loc[i, 'Credit'] = diff
+    return df
+
+# --- UI: INPUTS ---
+uploaded = st.file_uploader("Upload Statement", type=['pdf'])
+c1, c2, c3, c4 = st.columns(4)
+name, dob, pan, custom = c1.text_input("Name"), c2.date_input("DOB", None), c3.text_input("PAN"), c4.text_input("Custom Pwd", type="password")
+
+if st.button("🚀 Process"):
+    with st.spinner("Extracting..."):
+        df = process_pdf(uploaded, generate_passwords(name, dob, pan, custom))
+        st.session_state['raw_data'] = df
+        st.success("Extracted!")
+
+# --- UI: DASHBOARD & FILTER ---
+if st.session_state['raw_data'] is not None:
+    df = st.session_state['raw_data']
+    st.write("---")
+    f_date, t_date = st.columns(2)
+    start = f_date.date_input("Start", df['Date'].min())
+    end = t_date.date_input("End", df['Date'].max())
+    
+    filtered = df[(df['Date'].dt.date >= start) & (df['Date'].dt.date <= end)]
+    
+    # Metrics
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Debits", f"₹{filtered['Debit'].sum():,.2f}", f"{len(filtered[filtered['Debit']>0])} Txns")
+    m2.metric("Credits", f"₹{filtered['Credit'].sum():,.2f}", f"{len(filtered[filtered['Credit']>0])} Txns")
+    m3.metric("Opening", f"₹{filtered.iloc[0]['Balance'] - (filtered.iloc[0]['Credit'] - filtered.iloc[0]['Debit']):,.2f}")
+    m4.metric("Closing", f"₹{filtered.iloc[-1]['Balance']:,.2f}")
+    
+    st.dataframe(filtered, use_container_width=True)
+    st.download_button("Download CSV", filtered.to_csv(index=False), "data.csv")
